@@ -1,0 +1,610 @@
+{
+  "image_file": "mock_wafer_xrt_02.tif",
+  "shape": [
+    2048,
+    2048
+  ],
+  "num_defects": 40,
+  "defects": [
+    {
+      "defect_id": 0,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        356,
+        1196,
+        370,
+        1210
+      ],
+      "center": [
+        363.0,
+        1203.0
+      ]
+    },
+    {
+      "defect_id": 1,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        439,
+        618,
+        480,
+        645
+      ],
+      "center": [
+        460.0,
+        632.0
+      ]
+    },
+    {
+      "defect_id": 2,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        1620,
+        959,
+        1632,
+        971
+      ],
+      "center": [
+        1626.0,
+        965.0
+      ]
+    },
+    {
+      "defect_id": 3,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        215,
+        1795,
+        229,
+        1809
+      ],
+      "center": [
+        222.0,
+        1802.0
+      ]
+    },
+    {
+      "defect_id": 4,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        1427,
+        1668,
+        1439,
+        1680
+      ],
+      "center": [
+        1433.0,
+        1674.0
+      ]
+    },
+    {
+      "defect_id": 5,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        1364,
+        494,
+        1374,
+        504
+      ],
+      "center": [
+        1369.0,
+        499.0
+      ]
+    },
+    {
+      "defect_id": 6,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        1009,
+        1034,
+        1052,
+        1059
+      ],
+      "center": [
+        1031.0,
+        1047.0
+      ]
+    },
+    {
+      "defect_id": 7,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        890,
+        707,
+        900,
+        717
+      ],
+      "center": [
+        895.0,
+        712.0
+      ]
+    },
+    {
+      "defect_id": 8,
+      "class_id": 2,
+      "class_name": "TSD",
+      "bbox": [
+        603,
+        1114,
+        629,
+        1140
+      ],
+      "center": [
+        616.0,
+        1127.0
+      ]
+    },
+    {
+      "defect_id": 9,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        320,
+        1546,
+        334,
+        1560
+      ],
+      "center": [
+        327.0,
+        1553.0
+      ]
+    },
+    {
+      "defect_id": 10,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        248,
+        1771,
+        260,
+        1783
+      ],
+      "center": [
+        254.0,
+        1777.0
+      ]
+    },
+    {
+      "defect_id": 11,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        652,
+        1239,
+        664,
+        1251
+      ],
+      "center": [
+        658.0,
+        1245.0
+      ]
+    },
+    {
+      "defect_id": 12,
+      "class_id": 2,
+      "class_name": "TSD",
+      "bbox": [
+        1075,
+        1321,
+        1107,
+        1353
+      ],
+      "center": [
+        1091.0,
+        1337.0
+      ]
+    },
+    {
+      "defect_id": 13,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        825,
+        1648,
+        835,
+        1658
+      ],
+      "center": [
+        830.0,
+        1653.0
+      ]
+    },
+    {
+      "defect_id": 14,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        1011,
+        1535,
+        1054,
+        1586
+      ],
+      "center": [
+        1033.0,
+        1561.0
+      ]
+    },
+    {
+      "defect_id": 15,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        696,
+        1299,
+        739,
+        1344
+      ],
+      "center": [
+        718.0,
+        1322.0
+      ]
+    },
+    {
+      "defect_id": 16,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        436,
+        568,
+        477,
+        585
+      ],
+      "center": [
+        457.0,
+        577.0
+      ]
+    },
+    {
+      "defect_id": 17,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        362,
+        207,
+        423,
+        254
+      ],
+      "center": [
+        393.0,
+        231.0
+      ]
+    },
+    {
+      "defect_id": 18,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        1453,
+        553,
+        1465,
+        565
+      ],
+      "center": [
+        1459.0,
+        559.0
+      ]
+    },
+    {
+      "defect_id": 19,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        1674,
+        774,
+        1731,
+        807
+      ],
+      "center": [
+        1703.0,
+        791.0
+      ]
+    },
+    {
+      "defect_id": 20,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        1049,
+        130,
+        1063,
+        144
+      ],
+      "center": [
+        1056.0,
+        137.0
+      ]
+    },
+    {
+      "defect_id": 21,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        165,
+        722,
+        177,
+        734
+      ],
+      "center": [
+        171.0,
+        728.0
+      ]
+    },
+    {
+      "defect_id": 22,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        1055,
+        165,
+        1065,
+        175
+      ],
+      "center": [
+        1060.0,
+        170.0
+      ]
+    },
+    {
+      "defect_id": 23,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        1398,
+        1397,
+        1449,
+        1438
+      ],
+      "center": [
+        1424.0,
+        1418.0
+      ]
+    },
+    {
+      "defect_id": 24,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        1494,
+        796,
+        1567,
+        831
+      ],
+      "center": [
+        1531.0,
+        814.0
+      ]
+    },
+    {
+      "defect_id": 25,
+      "class_id": 2,
+      "class_name": "TSD",
+      "bbox": [
+        1605,
+        1870,
+        1643,
+        1908
+      ],
+      "center": [
+        1624.0,
+        1889.0
+      ]
+    },
+    {
+      "defect_id": 26,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        1756,
+        594,
+        1768,
+        606
+      ],
+      "center": [
+        1762.0,
+        600.0
+      ]
+    },
+    {
+      "defect_id": 27,
+      "class_id": 2,
+      "class_name": "TSD",
+      "bbox": [
+        800,
+        783,
+        838,
+        821
+      ],
+      "center": [
+        819.0,
+        802.0
+      ]
+    },
+    {
+      "defect_id": 28,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        335,
+        294,
+        378,
+        321
+      ],
+      "center": [
+        357.0,
+        308.0
+      ]
+    },
+    {
+      "defect_id": 29,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        1402,
+        397,
+        1412,
+        407
+      ],
+      "center": [
+        1407.0,
+        402.0
+      ]
+    },
+    {
+      "defect_id": 30,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        571,
+        421,
+        581,
+        431
+      ],
+      "center": [
+        576.0,
+        426.0
+      ]
+    },
+    {
+      "defect_id": 31,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        1258,
+        460,
+        1272,
+        474
+      ],
+      "center": [
+        1265.0,
+        467.0
+      ]
+    },
+    {
+      "defect_id": 32,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        418,
+        149,
+        475,
+        170
+      ],
+      "center": [
+        447.0,
+        160.0
+      ]
+    },
+    {
+      "defect_id": 33,
+      "class_id": 0,
+      "class_name": "BPD",
+      "bbox": [
+        1496,
+        685,
+        1539,
+        726
+      ],
+      "center": [
+        1518.0,
+        706.0
+      ]
+    },
+    {
+      "defect_id": 34,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        1234,
+        1868,
+        1248,
+        1882
+      ],
+      "center": [
+        1241.0,
+        1875.0
+      ]
+    },
+    {
+      "defect_id": 35,
+      "class_id": 2,
+      "class_name": "TSD",
+      "bbox": [
+        978,
+        1881,
+        1006,
+        1909
+      ],
+      "center": [
+        992.0,
+        1895.0
+      ]
+    },
+    {
+      "defect_id": 36,
+      "class_id": 2,
+      "class_name": "TSD",
+      "bbox": [
+        1474,
+        173,
+        1508,
+        207
+      ],
+      "center": [
+        1491.0,
+        190.0
+      ]
+    },
+    {
+      "defect_id": 37,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        754,
+        421,
+        766,
+        433
+      ],
+      "center": [
+        760.0,
+        427.0
+      ]
+    },
+    {
+      "defect_id": 38,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        866,
+        1603,
+        876,
+        1613
+      ],
+      "center": [
+        871.0,
+        1608.0
+      ]
+    },
+    {
+      "defect_id": 39,
+      "class_id": 1,
+      "class_name": "TED",
+      "bbox": [
+        182,
+        1537,
+        194,
+        1549
+      ],
+      "center": [
+        188.0,
+        1543.0
+      ]
+    }
+  ]
+}

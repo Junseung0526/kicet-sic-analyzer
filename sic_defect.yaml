@@ -1,0 +1,9 @@
+# YOLOv8 / YOLOv11 dataset configuration for SiC Wafer Defect Detection
+path: data/dataset
+train: images/train
+val: images/val
+
+names:
+  0: BPD   # Basal Plane Dislocation (기저면 전위)
+  1: TED   # Threading Edge Dislocation (관통 칼날 전위)
+  2: TSD   # Threading Screw Dislocation (관통 나선 전위)

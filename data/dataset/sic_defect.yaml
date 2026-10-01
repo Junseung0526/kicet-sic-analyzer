@@ -1,0 +1,7 @@
+path: /Volumes/T9 Junseung/sic-defect-ai/data/dataset
+train: images/train
+val: images/val
+names:
+  0: BPD
+  1: TED
+  2: TSD
