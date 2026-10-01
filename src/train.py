@@ -136,6 +136,14 @@ def train_yolo(
             )
             output_summary["best_onnx"] = str(onnx_path)
             print(f"[Export] Successfully generated ONNX model: {onnx_path}")
+
+            # Copy to root best.onnx for easy access by desktop GUI and packaging
+            try:
+                import shutil
+                shutil.copy2(onnx_path, Path("best.onnx"))
+                print(f"[Export] Copied weights to project root: best.onnx")
+            except Exception as ce:
+                print(f"[Warning] Could not copy best.onnx to root: {ce}")
         except Exception as e:
             print(f"[Export Error] Failed to export ONNX: {e}")
 

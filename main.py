@@ -108,7 +108,12 @@ def run_prepare_dataset(
     print(f"  - YAML config:       {yaml_path}")
     print(f"  - Train patches:     {stats['train_samples']}")
     print(f"  - Validation patches: {stats['val_samples']}")
-    print(f"  - Defect instances:  BPD={stats.get('defects_BPD', 0)}, TED={stats.get('defects_TED', 0)}, TSD={stats.get('defects_TSD', 0)}")
+    print(
+        f"  - Defect instances:  BPD={stats.get('defects_BPD', 0)}, "
+        f"TED={stats.get('defects_TED', 0)}, "
+        f"TSD={stats.get('defects_TSD', 0)}, "
+        f"Particle={stats.get('defects_Particle', 0)}"
+    )
     return yaml_path
 
 

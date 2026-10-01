@@ -1,15 +1,16 @@
 {
-  "image_file": "kicet_before_annealing_1.tif",
+  "image_file": "kicet_1area_before_annealing_1.tif",
   "original_path": "/Volumes/T9 Junseung/\u1109\u1166\u1105\u1161\u1106\u1175\u11a8 \u1100\u1175\u1109\u116e\u11af\u110b\u116f\u11ab \u1103\u1166\u110b\u1175\u1110\u1165/XRT 2D/1 Area/Before annealing_1/before annealing_1/before annealing_1.tif",
   "shape": [
     12272,
     12314
   ],
-  "num_defects": 1957,
+  "num_defects": 1966,
   "counts": {
     "BPD": 135,
     "TED": 507,
-    "TSD": 1315
+    "TSD": 1315,
+    "Particle": 9
   },
   "defects": [
     {
@@ -29365,6 +29366,141 @@
       "center": [
         10303.5,
         6012.5
+      ]
+    },
+    {
+      "defect_id": 1958,
+      "class_id": 3,
+      "class_name": "Particle",
+      "bbox": [
+        5674.5,
+        5264.3,
+        5698.5,
+        5288.3
+      ],
+      "center": [
+        5686.5,
+        5276.3
+      ]
+    },
+    {
+      "defect_id": 1959,
+      "class_id": 3,
+      "class_name": "Particle",
+      "bbox": [
+        4611.0,
+        9472.2,
+        4635.0,
+        9496.2
+      ],
+      "center": [
+        4623.0,
+        9484.2
+      ]
+    },
+    {
+      "defect_id": 1960,
+      "class_id": 3,
+      "class_name": "Particle",
+      "bbox": [
+        11528.0,
+        8143.2,
+        11552.0,
+        8167.2
+      ],
+      "center": [
+        11540.0,
+        8155.2
+      ]
+    },
+    {
+      "defect_id": 1961,
+      "class_id": 3,
+      "class_name": "Particle",
+      "bbox": [
+        1842.0,
+        7851.8,
+        1866.0,
+        7875.8
+      ],
+      "center": [
+        1854.0,
+        7863.8
+      ]
+    },
+    {
+      "defect_id": 1962,
+      "class_id": 3,
+      "class_name": "Particle",
+      "bbox": [
+        2759.5,
+        9794.8,
+        2783.5,
+        9818.8
+      ],
+      "center": [
+        2771.5,
+        9806.8
+      ]
+    },
+    {
+      "defect_id": 1963,
+      "class_id": 3,
+      "class_name": "Particle",
+      "bbox": [
+        3224.5,
+        10752.8,
+        3248.5,
+        10776.8
+      ],
+      "center": [
+        3236.5,
+        10764.8
+      ]
+    },
+    {
+      "defect_id": 1964,
+      "class_id": 3,
+      "class_name": "Particle",
+      "bbox": [
+        9189.8,
+        0.0,
+        9213.8,
+        24.0
+      ],
+      "center": [
+        9201.8,
+        12.0
+      ]
+    },
+    {
+      "defect_id": 1965,
+      "class_id": 3,
+      "class_name": "Particle",
+      "bbox": [
+        2851.8,
+        1314.5,
+        2875.8,
+        1338.5
+      ],
+      "center": [
+        2863.8,
+        1326.5
+      ]
+    },
+    {
+      "defect_id": 1966,
+      "class_id": 3,
+      "class_name": "Particle",
+      "bbox": [
+        3405.5,
+        4921.5,
+        3429.5,
+        4945.5
+      ],
+      "center": [
+        3417.5,
+        4933.5
       ]
     }
   ]

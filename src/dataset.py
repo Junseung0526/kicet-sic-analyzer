@@ -124,6 +124,12 @@ def build_yolo_dataset(
     train_lbl_dir = out_path / "labels" / "train"
     val_lbl_dir = out_path / "labels" / "val"
 
+    # Clean existing directories to avoid mixing old patches
+    if (out_path / "images").exists():
+        shutil.rmtree(out_path / "images", ignore_errors=True)
+    if (out_path / "labels").exists():
+        shutil.rmtree(out_path / "labels", ignore_errors=True)
+
     for d in [train_img_dir, val_img_dir, train_lbl_dir, val_lbl_dir]:
         d.mkdir(parents=True, exist_ok=True)
 

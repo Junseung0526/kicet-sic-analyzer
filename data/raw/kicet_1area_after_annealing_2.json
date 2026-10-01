@@ -1,5 +1,5 @@
 {
-  "image_file": "kicet_after_annealing_2.tif",
+  "image_file": "kicet_1area_after_annealing_2.tif",
   "original_path": "/Volumes/T9 Junseung/\u1109\u1166\u1105\u1161\u1106\u1175\u11a8 \u1100\u1175\u1109\u116e\u11af\u110b\u116f\u11ab \u1103\u1166\u110b\u1175\u1110\u1165/XRT 2D/1 Area/After annealing_1/After annealing_2/After annealing_2.tif",
   "shape": [
     12126,
@@ -9,7 +9,8 @@
   "counts": {
     "BPD": 83,
     "TED": 643,
-    "TSD": 815
+    "TSD": 815,
+    "Particle": 0
   },
   "defects": [
     {

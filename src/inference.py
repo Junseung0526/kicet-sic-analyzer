@@ -108,6 +108,7 @@ class WaferInferenceEngine:
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         self.device = device
+        self.class_names = CLASS_NAMES
         self.model = YOLO(str(self.model_path))
 
     def predict_patch(self, patch: np.ndarray) -> List[Dict[str, Any]]:
@@ -244,6 +245,7 @@ class OnnxWaferInferenceEngine:
 
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
+        self.class_names = CLASS_NAMES
 
         if providers is None:
             available = ort.get_available_providers()
@@ -539,6 +541,7 @@ def visualize_wafer_defects(
         "BPD": {"color": "#00b0ff", "marker": "_", "size": 100, "linewidth": 2.5, "label": f"BPD ({counts.get('BPD', 0)})"},
         "TED": {"color": "#ffea00", "marker": "o", "size": 25, "linewidth": 1.0, "label": f"TED ({counts.get('TED', 0)})"},
         "TSD": {"color": "#ff1744", "marker": "s", "size": 60, "linewidth": 1.5, "label": f"TSD ({counts.get('TSD', 0)})"},
+        "Particle": {"color": "#b388ff", "marker": "x", "size": 50, "linewidth": 1.5, "label": f"Particle ({counts.get('Particle', 0)})"},
     }
 
     for cname, st in style_map.items():

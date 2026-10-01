@@ -21,9 +21,10 @@ import tifffile
 
 # Defect Class Definitions
 CLASS_NAMES = {
-    0: "BPD",  # Basal Plane Dislocation (기저면 전위)
-    1: "TED",  # Threading Edge Dislocation (관통 칼날 전위)
-    2: "TSD",  # Threading Screw Dislocation (관통 나선 전위)
+    0: "BPD",       # Basal Plane Dislocation (기저면 전위)
+    1: "TED",       # Threading Edge Dislocation (관통 칼날 전위)
+    2: "TSD",       # Threading Screw Dislocation (관통 나선 전위)
+    3: "Particle",  # Surface Particle / Dust / Artifact (표면 이물질)
 }
 CLASS_TO_ID = {v: k for k, v in CLASS_NAMES.items()}
 
@@ -199,6 +200,7 @@ DEFECT_BOX_SIZES = {
     0: 40,  # BPD: 40x40 box (lengthy dislocation line)
     1: 16,  # TED: 16x16 box (small dot)
     2: 30,  # TSD: 30x30 box (distinct core & halo)
+    3: 24,  # Particle: 24x24 box (surface dust/foreign particles)
 }
 
 
@@ -228,8 +230,10 @@ def parse_kicet_roi_file(
         class_id = 2
     elif "TED" in fname_upper:
         class_id = 1
+    elif any(k in fname_upper for k in ["PARTICLE", "DUST", "ARTIFACT", "UNKNOWN"]):
+        class_id = 3
     else:
-        # Ignore unknown ROIs or assign default
+        # Ignore unclassified ROIs
         return []
 
     class_name = CLASS_NAMES[class_id]
@@ -321,21 +325,51 @@ def import_kicet_dataset(
             continue
 
         # Look for corresponding ROI files in the same directory
-        roi_files = sorted(list(parent_dir.glob("*.roi")))
+        raw_roi_files = sorted(list(parent_dir.glob("*.roi")))
+
+        # Filter ROI files by filename context (e.g. avoid matching After ROIs to Before TIF)
+        t_stem = tiff_file.stem.lower()
+        roi_files = []
+        for r in raw_roi_files:
+            r_name = r.name.lower()
+            if "after" in t_stem and "before" in r_name:
+                continue
+            if "before" in t_stem and "after" in r_name:
+                continue
+            roi_files.append(r)
+
+        if not roi_files:
+            print(f"[Skip] No matching ROI label files for {tiff_file.name} in {parent_dir.name}")
+            continue
 
         all_defects: List[Dict[str, Any]] = []
         for rfile in roi_files:
             parsed = parse_kicet_roi_file(rfile, img_shape, start_id=len(all_defects) + 1)
             all_defects.extend(parsed)
 
+        if not all_defects:
+            print(f"[Skip] Zero valid defects found for {tiff_file.name}")
+            continue
+
         # Create standardized target file name
-        # E.g. "kicet_after_annealing_1.tif"
+        # E.g. "kicet_1area_after_annealing_1.tif"
+        rel_parts = tiff_file.relative_to(src_path).parts
+        area_prefix = ""
+        for part in rel_parts:
+            if "area" in part.lower():
+                area_prefix = part.lower().replace(" ", "") + "_"
+                break
+
         safe_stem = tiff_file.stem.strip().lower().replace(" ", "_")
         parent_stem = parent_dir.name.strip().lower().replace(" ", "_")
-        if parent_stem not in safe_stem:
-            dest_name = f"kicet_{parent_stem}_{safe_stem}"
+        if parent_stem in safe_stem:
+            dest_name = f"kicet_{area_prefix}{safe_stem}"
+        elif safe_stem in parent_stem:
+            dest_name = f"kicet_{area_prefix}{parent_stem}"
+        elif parent_stem.split("_")[0] == safe_stem.split("_")[0]:
+            dest_name = f"kicet_{area_prefix}{safe_stem}"
         else:
-            dest_name = f"kicet_{safe_stem}"
+            dest_name = f"kicet_{area_prefix}{parent_stem}_{safe_stem}"
 
         dest_tif = dst_path / f"{dest_name}.tif"
         dest_json = dst_path / f"{dest_name}.json"
@@ -379,7 +413,10 @@ def import_kicet_dataset(
             "rois_found": len(roi_files),
         }
         imported_summary.append(summary_item)
-        print(f"[Imported] {dest_tif.name}: {len(all_defects)} defects (BPD={counts['BPD']}, TED={counts['TED']}, TSD={counts['TSD']})")
+        print(
+            f"[Imported] {dest_tif.name}: {len(all_defects)} defects "
+            f"(BPD={counts['BPD']}, TED={counts['TED']}, TSD={counts['TSD']}, Particle={counts.get('Particle', 0)})"
+        )
 
     return imported_summary
 
