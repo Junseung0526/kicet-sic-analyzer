@@ -1001,16 +1001,19 @@ class SiCDefectMainWindow(QMainWindow):
     def locate_default_model(self) -> Path:
         """Locates best.onnx or best.pt across standard project paths."""
         candidates = [
+            Path("best.onnx"),
+            Path("runs") / "detect" / "runs" / "train" / "sic_defect_train" / "weights" / "best.onnx",
+            Path("runs") / "detect" / "runs" / "train" / "sic_defect_train" / "weights" / "best.pt",
             Path("runs") / "train" / "sic_defect_train" / "weights" / "best.onnx",
             Path("runs") / "train" / "sic_defect_train" / "weights" / "best.pt",
-            Path("best.onnx"),
+            Path("best.pt"),
             Path("yolov8n.onnx"),
             Path("yolov8n.pt"),
         ]
         for c in candidates:
             if c.exists():
                 return c.resolve()
-        return (Path("runs") / "train" / "sic_defect_train" / "weights" / "best.onnx").resolve()
+        return (Path("best.onnx")).resolve()
 
     def create_vsep(self) -> QFrame:
         """Creates vertical separator line."""

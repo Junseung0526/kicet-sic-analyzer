@@ -610,9 +610,12 @@ def get_inference_engine(
     """
     # Candidate search paths if model_path is None or not existing
     default_candidates = [
+        Path("best.onnx"),
+        Path("runs/detect/runs/train/sic_defect_train/weights/best.onnx"),
+        Path("runs/detect/runs/train/sic_defect_train/weights/best.pt"),
         Path("runs/train/sic_defect_train/weights/best.onnx"),
         Path("runs/train/sic_defect_train/weights/best.pt"),
-        Path("best.onnx"),
+        Path("best.pt"),
         Path("yolov8n.onnx"),
         Path("yolov8n.pt"),
     ]
