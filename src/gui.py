@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
-from PyQt6.QtCore import QPointF, QRectF, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -29,6 +29,7 @@ from PyQt6.QtGui import (
     QPainter,
     QPen,
     QPixmap,
+    QTransform,
     QWheelEvent,
 )
 from PyQt6.QtWidgets import (
@@ -179,20 +180,35 @@ class WaferCanvasView(QGraphicsView):
         if self.min_zoom <= new_scale <= self.max_zoom:
             self.scale(factor, factor)
 
-    def set_display_pixmap(self, pixmap: QPixmap):
-        """Displays or updates the main wafer image on the canvas."""
+    def set_display_pixmap(
+        self,
+        pixmap: QPixmap,
+        scale_x: float = 1.0,
+        scale_y: float = 1.0,
+        auto_fit: bool = False,
+    ):
+        """Displays or updates the main wafer image on the canvas.
+
+        Supports proxy scale transform to preserve global full-wafer coordinate system.
+        """
         if self.pixmap_item is None:
             self.pixmap_item = self.scene.addPixmap(pixmap)
             self.pixmap_item.setZValue(0)
-            self.fit_in_view()
+            self.pixmap_item.setTransform(QTransform.fromScale(scale_x, scale_y))
+            if auto_fit:
+                self.fit_in_view()
         else:
             self.pixmap_item.setPixmap(pixmap)
+            self.pixmap_item.setTransform(QTransform.fromScale(scale_x, scale_y))
+            if auto_fit:
+                self.fit_in_view()
 
     def fit_in_view(self):
         """Fits image to canvas view."""
         if self.pixmap_item is not None:
-            self.scene.setSceneRect(self.pixmap_item.boundingRect())
-            self.fitInView(self.pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+            scene_rect = self.pixmap_item.sceneBoundingRect()
+            self.scene.setSceneRect(scene_rect)
+            self.fitInView(scene_rect, Qt.AspectRatioMode.KeepAspectRatio)
 
     def reset_zoom_100(self):
         """Resets zoom to 100% pixel scale."""
@@ -268,6 +284,17 @@ class SiCDefectMainWindow(QMainWindow):
         self.last_results: Optional[Dict[str, Any]] = None
         self.worker: Optional[InferenceWorker] = None
 
+        # Performance Cache for Smooth Real-Time Sliders (Dual-Resolution Proxy + LUT)
+        self.base_norm_8bit: Optional[np.ndarray] = None
+        self.proxy_norm_8bit: Optional[np.ndarray] = None
+        self.proxy_scale_x: float = 1.0
+        self.proxy_scale_y: float = 1.0
+
+        # Debounce timer for high-res 12k rendering after slider settles
+        self.debounce_timer = QTimer(self)
+        self.debounce_timer.setSingleShot(True)
+        self.debounce_timer.timeout.connect(self.render_fullres_image)
+
         # Default model search (Pure pathlib)
         self.model_path = self.locate_default_model()
 
@@ -341,7 +368,8 @@ class SiCDefectMainWindow(QMainWindow):
         self.brightness_slider.setRange(-100, 100)
         self.brightness_slider.setValue(0)
         self.brightness_slider.setFixedWidth(120)
-        self.brightness_slider.valueChanged.connect(self.update_image_display)
+        self.brightness_slider.valueChanged.connect(self.on_slider_value_changed)
+        self.brightness_slider.sliderReleased.connect(self.render_fullres_image)
         bottom_layout.addWidget(self.brightness_slider)
 
         # 3. Contrast Slider
@@ -350,7 +378,8 @@ class SiCDefectMainWindow(QMainWindow):
         self.contrast_slider.setRange(20, 300)
         self.contrast_slider.setValue(100)
         self.contrast_slider.setFixedWidth(120)
-        self.contrast_slider.valueChanged.connect(self.update_image_display)
+        self.contrast_slider.valueChanged.connect(self.on_slider_value_changed)
+        self.contrast_slider.sliderReleased.connect(self.render_fullres_image)
         bottom_layout.addWidget(self.contrast_slider)
 
         # 4. View Reset Buttons
@@ -558,7 +587,10 @@ class SiCDefectMainWindow(QMainWindow):
             self.canvas.clear_overlays()
             self.btn_export.setEnabled(False)
             self.init_summary_table()
-            self.update_image_display()
+
+            # Pre-compute base normalization and proxy cache
+            self.prepare_slice_cache()
+            self.render_fullres_image()
             self.canvas.fit_in_view()
             self.lbl_status.setText("Image loaded successfully.")
         except Exception as e:
@@ -570,32 +602,78 @@ class SiCDefectMainWindow(QMainWindow):
             self.current_slice_idx = value
             self.slice_label.setText(f"Slice: {value + 1}/{self.num_slices}")
             self.current_slice_2d = self.raw_data[value]
-            self.update_image_display()
+            self.prepare_slice_cache()
+            self.render_fullres_image()
 
-    def update_image_display(self):
-        """Applies real-time brightness and contrast sliders and renders QPixmap."""
+    def prepare_slice_cache(self):
+        """Pre-normalizes slice and pre-generates lightweight proxy cache for 60fps sliders."""
         if self.current_slice_2d is None:
             return
 
-        # 1. Base 8-bit normalization
-        norm_8bit = normalize_16bit_to_8bit(self.current_slice_2d)
+        # 1. Compute full base 8-bit normalization ONCE
+        self.base_norm_8bit = normalize_16bit_to_8bit(self.current_slice_2d)
 
-        # 2. Real-time Brightness & Contrast adjustment
-        # Brightness: -100 to +100 (offset)
-        # Contrast: 20 to 300 (percentage scale, 100 = 1.0)
+        # 2. Compute lightweight proxy (max 2048x2048) for instant slider feedback
+        h, w = self.base_norm_8bit.shape[:2]
+        max_proxy = 2048
+        if max(h, w) > max_proxy:
+            scale = max_proxy / float(max(h, w))
+            pw = max(1, int(round(w * scale)))
+            ph = max(1, int(round(h * scale)))
+            self.proxy_norm_8bit = cv2.resize(self.base_norm_8bit, (pw, ph), interpolation=cv2.INTER_AREA)
+            self.proxy_scale_x = w / float(pw)
+            self.proxy_scale_y = h / float(ph)
+        else:
+            self.proxy_norm_8bit = self.base_norm_8bit
+            self.proxy_scale_x = 1.0
+            self.proxy_scale_y = 1.0
+
+    def get_brightness_contrast_lut(self) -> np.ndarray:
+        """Computes 256-element Look-Up Table (LUT) for O(1) brightness/contrast scaling."""
         b_offset = float(self.brightness_slider.value())
         c_scale = float(self.contrast_slider.value()) / 100.0
 
-        adjusted = (norm_8bit.astype(np.float32) - 128.0) * c_scale + 128.0 + b_offset
-        adjusted = np.clip(adjusted, 0.0, 255.0).astype(np.uint8)
+        indices = np.arange(256, dtype=np.float32)
+        lut = np.clip((indices - 128.0) * c_scale + 128.0 + b_offset, 0.0, 255.0).astype(np.uint8)
+        return lut
 
-        # 3. Create QPixmap
-        h, w = adjusted.shape[:2]
-        bytes_per_line = w
-        qimg = QImage(adjusted.data, w, h, bytes_per_line, QImage.Format.Format_Grayscale8)
+    def on_slider_value_changed(self):
+        """Immediately renders lightweight proxy image (<2ms) and schedules high-res render."""
+        if self.proxy_norm_8bit is None:
+            return
+
+        # 1. Instant 60 FPS feedback using proxy + cv2.LUT
+        lut = self.get_brightness_contrast_lut()
+        adjusted_proxy = cv2.LUT(self.proxy_norm_8bit, lut)
+
+        ph, pw = adjusted_proxy.shape[:2]
+        qimg = QImage(adjusted_proxy.data, pw, ph, pw, QImage.Format.Format_Grayscale8)
         pixmap = QPixmap.fromImage(qimg)
 
-        self.canvas.set_display_pixmap(pixmap)
+        # Display with scale so bounding boxes remain perfectly aligned
+        self.canvas.set_display_pixmap(pixmap, scale_x=self.proxy_scale_x, scale_y=self.proxy_scale_y, auto_fit=False)
+
+        # 2. Debounce: Schedule full 12k rendering after 80ms of inactivity
+        self.debounce_timer.start(80)
+
+    def render_fullres_image(self):
+        """Renders original full-resolution (e.g. 12k x 12k) image using cv2.LUT."""
+        self.debounce_timer.stop()
+        if self.base_norm_8bit is None:
+            return
+
+        lut = self.get_brightness_contrast_lut()
+        adjusted_full = cv2.LUT(self.base_norm_8bit, lut)
+
+        h, w = adjusted_full.shape[:2]
+        qimg = QImage(adjusted_full.data, w, h, w, QImage.Format.Format_Grayscale8)
+        pixmap = QPixmap.fromImage(qimg)
+
+        self.canvas.set_display_pixmap(pixmap, scale_x=1.0, scale_y=1.0, auto_fit=False)
+
+    def update_image_display(self):
+        """Legacy compatibility wrapper calling render_fullres_image."""
+        self.render_fullres_image()
 
     # --------------------------------------------------------------------------
     # Inference Pipeline
