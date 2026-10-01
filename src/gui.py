@@ -34,7 +34,10 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QCheckBox,
+    QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QGraphicsItem,
@@ -53,6 +56,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSplitter,
     QTableWidget,
@@ -62,7 +66,20 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.inference import CLASS_NAMES, get_inference_engine
+import matplotlib
+matplotlib.use("QtAgg")
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+
+from src.inference import (
+    CLASS_NAMES,
+    DEFAULT_TSD_ANGLE_BINS,
+    analyze_domain_measurements,
+    calculate_tsd_angle,
+    classify_tsd_angle,
+    get_inference_engine,
+    measure_bpd_length,
+)
 from src.preprocess import (
     inspect_and_load_xrt,
     normalize_16bit_to_8bit,
@@ -123,17 +140,19 @@ TRANSLATIONS = {
         "grid_hotspot": "🔥 최고 밀집 구역: {zone} (결함 {count}개, {pct}%)",
         "grid_no_data": "분석 실행 후 9개 구역별 결함 수와 밀도가 집계됩니다.",
         "grid_headers": ["구역 (Zone)", "방위", "결함 수", "점유율"],
-        "analysis_bpd_title": "BPD 전위 길이 분포 분석 (Dislocation Length)",
-        "analysis_bpd_desc": "BPD 결함의 선형 전파 길이(px) 필터링 및 통계 분석 (연구원 설정)",
-        "analysis_bpd_min": "최소 길이 필터: {val} px",
-        "analysis_bpd_max": "최대 길이 필터: {val} px",
-        "analysis_bpd_stats": "평균 길이: N/A | 최대 길이: N/A | 표준편차: N/A",
+        "pixel_scale_label": "웨이퍼 해상도 (Pixel Scale):",
+        "analysis_bpd_title": "BPD 선 결함 길이 분석 (Dislocation Length, μm)",
+        "analysis_bpd_desc": "주성분 분석(PCA) 기반 BPD 결함 장축 길이 측정 및 μm 환산",
+        "analysis_bpd_summary": "BPD 결함 수: {cnt}개 | 평균: {mean} μm | 최대: {max} μm | 최소: {min} μm",
+        "analysis_bpd_headers": ["ID", "중심 (X, Y)", "길이 (px)", "길이 (μm)"],
         "analysis_bpd_btn": "📈 BPD 길이 분포 히스토그램 생성",
-        "analysis_tsd_title": "TSD 전파 각도 및 코어 프로파일링 (Propagation Angle)",
-        "analysis_tsd_desc": "웨이퍼 축 기준 전파 각도 및 코어 반경 마진 설정 (연구원 설정)",
-        "analysis_tsd_angle": "기준 각도 축: {val}°",
-        "analysis_tsd_margin": "코어 반경 마진: {val} px",
-        "analysis_tsd_btn": "🧭 각도 벡터 맵 생성",
+        "analysis_tsd_title": "TSD 4방향 판별 및 커스텀 각도 룰셋 (Propagation Angle)",
+        "analysis_tsd_desc": "명암 모멘트 0~360° 중심 각도 산출 및 연구원 커스텀 각도 구간 룰셋",
+        "analysis_tsd_headers": ["라벨 (Label)", "시작 각도 (°)", "종료 각도 (°)", "결함 수", "비율 (%)"],
+        "btn_add_bin": "➕ 구간 추가",
+        "btn_del_bin": "➖ 구간 삭제",
+        "btn_reset_bins": "🔄 기본 4방향 (A~D)",
+        "btn_apply_bins": "⚡ 각도 룰 적용",
         "dialog_open_image": "SiC XRT 웨이퍼 이미지 선택",
         "dialog_select_model": "모델 가중치 선택",
         "dialog_save_report": "결함 보고서 저장",
@@ -192,17 +211,19 @@ TRANSLATIONS = {
         "grid_hotspot": "🔥 Peak Defect Density Hotspot: {zone} ({count} defects, {pct}%)",
         "grid_no_data": "Run defect analysis to compute regional density map.",
         "grid_headers": ["Zone", "Region", "Count", "Ratio"],
-        "analysis_bpd_title": "BPD Dislocation Length Distribution",
-        "analysis_bpd_desc": "BPD linear propagation length (px) threshold filtering & stats",
-        "analysis_bpd_min": "Min Length Filter: {val} px",
-        "analysis_bpd_max": "Max Length Filter: {val} px",
-        "analysis_bpd_stats": "Mean Length: N/A | Max Length: N/A | Std Dev: N/A",
+        "pixel_scale_label": "Pixel Scale Resolution:",
+        "analysis_bpd_title": "BPD Linear Defect Length Profiling (PCA, μm)",
+        "analysis_bpd_desc": "Principal Component Analysis (PCA) based BPD major-axis length & μm conversion",
+        "analysis_bpd_summary": "BPD Count: {cnt} | Mean: {mean} μm | Max: {max} μm | Min: {min} μm",
+        "analysis_bpd_headers": ["ID", "Center (X, Y)", "Length (px)", "Length (μm)"],
         "analysis_bpd_btn": "📈 Generate BPD Length Histogram",
-        "analysis_tsd_title": "TSD Propagation Angle & Core Profiling",
-        "analysis_tsd_desc": "Wafer axis propagation angle vector & core radius margin",
-        "analysis_tsd_angle": "Reference Angle Axis: {val}°",
-        "analysis_tsd_margin": "Core Radius Margin: {val} px",
-        "analysis_tsd_btn": "🧭 Generate Angle Vector Map",
+        "analysis_tsd_title": "TSD 4-Way & Custom Angle Rule Sets (Propagation Angle)",
+        "analysis_tsd_desc": "Image moments 0~360° centroid angle calculation & custom angle bin rules",
+        "analysis_tsd_headers": ["Label", "Start Angle (°)", "End Angle (°)", "Count", "Ratio (%)"],
+        "btn_add_bin": "➕ Add Bin",
+        "btn_del_bin": "➖ Delete Bin",
+        "btn_reset_bins": "🔄 Reset 4-Way (A~D)",
+        "btn_apply_bins": "⚡ Apply Rules",
         "dialog_open_image": "Select SiC XRT Wafer Image",
         "dialog_select_model": "Select Model Weights",
         "dialog_save_report": "Save Defect Report",
@@ -274,6 +295,67 @@ class InferenceWorker(QThread):
             self.finished_signal.emit(results)
         except Exception as e:
             self.error_signal.emit(str(e))
+
+
+# ==============================================================================
+# Precision Analysis Histogram Dialog
+# ==============================================================================
+
+class BPDHistogramDialog(QDialog):
+    """Modal dialog displaying BPD dislocation length distribution histogram."""
+
+    def __init__(self, parent: Optional[QWidget], lengths_um: List[float], lang: str = "KO"):
+        super().__init__(parent)
+        self.setWindowTitle("BPD 길이 분포 히스토그램" if lang == "KO" else "BPD Length Distribution Histogram")
+        self.resize(620, 460)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        fig = Figure(figsize=(6.2, 4.2), dpi=100, facecolor="#1e1e24")
+        canvas = FigureCanvasQTAgg(fig)
+        layout.addWidget(canvas, stretch=1)
+
+        ax = fig.add_subplot(111)
+        ax.set_facecolor("#252830")
+
+        if lengths_um:
+            data = np.array(lengths_um, dtype=np.float32)
+            bins_count = min(20, max(5, int(np.sqrt(len(data)))))
+            ax.hist(
+                data,
+                bins=bins_count,
+                color="#00b4ff",
+                edgecolor="#1e1e24",
+                alpha=0.85,
+                rwidth=0.9,
+            )
+            mean_val = float(np.mean(data))
+            median_val = float(np.median(data))
+            ax.axvline(mean_val, color="#ff5722", linestyle="--", linewidth=2.0, label=f"Mean: {mean_val:.1f} μm")
+            ax.axvline(median_val, color="#00e676", linestyle=":", linewidth=2.0, label=f"Median: {median_val:.1f} μm")
+            ax.legend(facecolor="#252830", edgecolor="#454c59", labelcolor="#ffffff")
+
+        title_str = "BPD Length Distribution (μm)"
+        xlabel_str = "Length (μm)"
+        ylabel_str = "Defect Count"
+
+        ax.set_title(title_str, color="#ffffff", fontsize=12, pad=10, fontweight="bold")
+        ax.set_xlabel(xlabel_str, color="#dcdcdc", fontsize=10)
+        ax.set_ylabel(ylabel_str, color="#dcdcdc", fontsize=10)
+        ax.tick_params(colors="#a0a0a0")
+        ax.grid(True, linestyle=":", alpha=0.35, color="#555566")
+
+        for spine in ax.spines.values():
+            spine.set_color("#454c59")
+
+        fig.tight_layout()
+        canvas.draw()
+
+        btn_close = QPushButton("닫기 (Close)" if lang == "KO" else "Close")
+        btn_close.setFixedHeight(32)
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
 
 
 # ==============================================================================
@@ -375,7 +457,7 @@ class WaferCanvasView(QGraphicsView):
             items.clear()
 
     def add_defect_boxes(self, defects: List[Dict[str, Any]]):
-        """Draws bounding boxes and labels for detected defects."""
+        """Draws bounding boxes and labels for detected defects with measurement tooltips."""
         self.clear_overlays()
 
         font = QFont()
@@ -398,9 +480,25 @@ class WaferCanvasView(QGraphicsView):
             rect_item.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 30)))
             rect_item.setZValue(10)
 
-            # Tooltip with defect details
+            # Tooltip with defect details & precision measurements
             conf = d.get("confidence", 0.0)
-            rect_item.setToolTip(f"Class: {cname}\nConf: {conf:.3f}\nCoord: ({bx1:.1f}, {by1:.1f})\nSize: {width:.1f}x{height:.1f}")
+            did = d.get("defect_id", "?")
+            tooltip_parts = [
+                f"ID: #{did}",
+                f"Class: {cname}",
+                f"Conf: {conf:.3f}",
+            ]
+
+            if cname == "BPD" and "length_um" in d:
+                tooltip_parts.append(f"Length: {d['length_um']:.1f} μm ({d.get('length_px', 0.0):.1f} px)")
+            elif cname == "TSD":
+                sub = d.get("sub_class", "TSD")
+                if "angle_deg" in d:
+                    tooltip_parts.append(f"Direction: {sub} ({d['angle_deg']:.1f}°)")
+
+            tooltip_parts.append(f"Coord: ({bx1:.1f}, {by1:.1f})")
+            tooltip_parts.append(f"Size: {width:.1f}x{height:.1f}")
+            rect_item.setToolTip("\n".join(tooltip_parts))
 
             self.scene.addItem(rect_item)
 
@@ -508,6 +606,21 @@ class WaferCanvasView(QGraphicsView):
         padded_rect = target_rect.adjusted(-zw * 0.02, -zh * 0.02, zw * 0.02, zh * 0.02)
         self.fitInView(padded_rect, Qt.AspectRatioMode.KeepAspectRatio)
 
+    def focus_on_defect(self, bbox_xyxy: List[float]):
+        """Centers and zooms viewport onto a specific defect with comfortable padding."""
+        if not bbox_xyxy or len(bbox_xyxy) < 4:
+            return
+        bx1, by1, bx2, by2 = bbox_xyxy
+        w = max(1.0, bx2 - bx1)
+        h = max(1.0, by2 - by1)
+        cx = bx1 + w / 2.0
+        cy = by1 + h / 2.0
+
+        # Margin around defect: 3.5x size or minimum 120 px
+        span = max(max(w, h) * 3.5, 120.0)
+        target_rect = QRectF(cx - span / 2.0, cy - span / 2.0, span, span)
+        self.fitInView(target_rect, Qt.AspectRatioMode.KeepAspectRatio)
+
 
 # ==============================================================================
 # Main Desktop Window
@@ -532,6 +645,12 @@ class SiCDefectMainWindow(QMainWindow):
 
         self.last_results: Optional[Dict[str, Any]] = None
         self.worker: Optional[InferenceWorker] = None
+
+        # Precision Domain Analysis State
+        self.pixel_size_um: float = 2.50
+        self.current_angle_bins: List[Dict[str, Any]] = [dict(b) for b in DEFAULT_TSD_ANGLE_BINS]
+        self.bpd_defects: List[Dict[str, Any]] = []
+        self.tsd_defects: List[Dict[str, Any]] = []
 
         # Performance Cache for Smooth Real-Time Sliders (Dual-Resolution Proxy + LUT)
         self.base_norm_8bit: Optional[np.ndarray] = None
@@ -866,80 +985,330 @@ class SiCDefectMainWindow(QMainWindow):
             self.table_summary.setItem(row_idx, 2, item_col)
 
     def init_analysis_tab(self):
-        """Initializes Tab 2: Precision Analysis placeholder for BPD length & TSD propagation angle."""
-        tab_layout = QVBoxLayout(self.tab_analysis)
-        tab_layout.setContentsMargins(6, 8, 6, 8)
-        tab_layout.setSpacing(10)
+        """Initializes Tab 2: Precision Analysis for BPD length & TSD custom angle bins."""
+        outer_layout = QVBoxLayout(self.tab_analysis)
+        outer_layout.setContentsMargins(2, 2, 2, 2)
+        outer_layout.setSpacing(0)
 
-        # Group 1: BPD Dislocation Length Distribution
-        self.grp_bpd_analysis = QGroupBox("BPD Dislocation Length Distribution")
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setStyleSheet("background-color: transparent;")
+
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(6, 6, 6, 6)
+        content_layout.setSpacing(10)
+
+        # ----------------------------------------------------------------------
+        # 0. Wafer Pixel Scale Resolution Calibration
+        # ----------------------------------------------------------------------
+        self.grp_scale = QGroupBox("Wafer Resolution Calibration")
+        scale_layout = QHBoxLayout(self.grp_scale)
+        scale_layout.setContentsMargins(8, 6, 8, 6)
+
+        self.lbl_pixel_scale = QLabel(self.tr("pixel_scale_label"))
+        self.lbl_pixel_scale.setStyleSheet("font-weight: bold;")
+        scale_layout.addWidget(self.lbl_pixel_scale)
+
+        self.spin_pixel_scale = QDoubleSpinBox()
+        self.spin_pixel_scale.setRange(0.05, 100.0)
+        self.spin_pixel_scale.setSingleStep(0.1)
+        self.spin_pixel_scale.setValue(self.pixel_size_um)
+        self.spin_pixel_scale.setDecimals(2)
+        self.spin_pixel_scale.setSuffix(" μm/px")
+        self.spin_pixel_scale.setFixedWidth(120)
+        self.spin_pixel_scale.valueChanged.connect(self.on_pixel_scale_changed)
+        scale_layout.addWidget(self.spin_pixel_scale)
+
+        content_layout.addWidget(self.grp_scale)
+
+        # ----------------------------------------------------------------------
+        # 1. BPD Dislocation Length Distribution (PCA, μm)
+        # ----------------------------------------------------------------------
+        self.grp_bpd_analysis = QGroupBox(self.tr("analysis_bpd_title"))
         bpd_layout = QVBoxLayout(self.grp_bpd_analysis)
+        bpd_layout.setContentsMargins(8, 8, 8, 8)
+        bpd_layout.setSpacing(6)
 
-        self.lbl_bpd_desc = QLabel("BPD linear propagation length (px) threshold filtering & stats")
+        self.lbl_bpd_desc = QLabel(self.tr("analysis_bpd_desc"))
         self.lbl_bpd_desc.setWordWrap(True)
+        self.lbl_bpd_desc.setStyleSheet("color: #a0a0a0; font-size: 11px;")
         bpd_layout.addWidget(self.lbl_bpd_desc)
 
-        # Sliders for min/max length filtering
-        self.lbl_bpd_min = QLabel("Min Length Filter: 10 px")
-        self.slider_bpd_min = QSlider(Qt.Orientation.Horizontal)
-        self.slider_bpd_min.setRange(0, 100)
-        self.slider_bpd_min.setValue(10)
-        self.slider_bpd_min.valueChanged.connect(lambda v: self.lbl_bpd_min.setText(self.tr("analysis_bpd_min", val=v)))
-        bpd_layout.addWidget(self.lbl_bpd_min)
-        bpd_layout.addWidget(self.slider_bpd_min)
+        # BPD summary statistics card
+        self.lbl_bpd_summary = QLabel(self.tr("analysis_bpd_summary", cnt=0, mean=0.0, max=0.0, min=0.0))
+        self.lbl_bpd_summary.setWordWrap(True)
+        self.lbl_bpd_summary.setStyleSheet("font-weight: bold; color: #00b4ff; padding: 4px 0;")
+        bpd_layout.addWidget(self.lbl_bpd_summary)
 
-        self.lbl_bpd_max = QLabel("Max Length Filter: 150 px")
-        self.slider_bpd_max = QSlider(Qt.Orientation.Horizontal)
-        self.slider_bpd_max.setRange(50, 400)
-        self.slider_bpd_max.setValue(150)
-        self.slider_bpd_max.valueChanged.connect(lambda v: self.lbl_bpd_max.setText(self.tr("analysis_bpd_max", val=v)))
-        bpd_layout.addWidget(self.lbl_bpd_max)
-        bpd_layout.addWidget(self.slider_bpd_max)
+        # BPD defects table (ID, Center, Length px, Length um)
+        self.table_bpd = QTableWidget(0, 4)
+        self.table_bpd.setHorizontalHeaderLabels(self.tr("analysis_bpd_headers"))
+        self.table_bpd.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table_bpd.verticalHeader().setVisible(False)
+        self.table_bpd.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_bpd.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table_bpd.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table_bpd.setFixedHeight(140)
+        self.table_bpd.cellClicked.connect(self.on_bpd_cell_clicked)
+        bpd_layout.addWidget(self.table_bpd)
 
-        self.lbl_bpd_stats = QLabel("Mean Length: N/A | Max Length: N/A | Std Dev: N/A")
-        self.lbl_bpd_stats.setStyleSheet("font-weight: bold; color: #58a6ff; padding: 4px 0;")
-        bpd_layout.addWidget(self.lbl_bpd_stats)
-
-        self.btn_bpd_hist = QPushButton("📈 Generate BPD Length Histogram")
-        self.btn_bpd_hist.clicked.connect(lambda: QMessageBox.information(
-            self, "BPD Analysis", "BPD dislocation length profiling module initialized.\n(Feature scheduled for integration with 3D tracking)."
-        ))
+        self.btn_bpd_hist = QPushButton(self.tr("analysis_bpd_btn"))
+        self.btn_bpd_hist.clicked.connect(self.show_bpd_histogram)
         bpd_layout.addWidget(self.btn_bpd_hist)
 
-        tab_layout.addWidget(self.grp_bpd_analysis)
+        content_layout.addWidget(self.grp_bpd_analysis)
 
-        # Group 2: TSD Propagation Angle & Core Profiling
-        self.grp_tsd_analysis = QGroupBox("TSD Propagation Angle & Core Profiling")
+        # ----------------------------------------------------------------------
+        # 2. TSD 4-Way & Custom Angle Rule Sets (Propagation Angle)
+        # ----------------------------------------------------------------------
+        self.grp_tsd_analysis = QGroupBox(self.tr("analysis_tsd_title"))
         tsd_layout = QVBoxLayout(self.grp_tsd_analysis)
+        tsd_layout.setContentsMargins(8, 8, 8, 8)
+        tsd_layout.setSpacing(6)
 
-        self.lbl_tsd_desc = QLabel("Wafer axis propagation angle vector & core radius margin")
+        self.lbl_tsd_desc = QLabel(self.tr("analysis_tsd_desc"))
         self.lbl_tsd_desc.setWordWrap(True)
+        self.lbl_tsd_desc.setStyleSheet("color: #a0a0a0; font-size: 11px;")
         tsd_layout.addWidget(self.lbl_tsd_desc)
 
-        self.lbl_tsd_angle = QLabel("Reference Angle Axis: 45°")
-        self.slider_tsd_angle = QSlider(Qt.Orientation.Horizontal)
-        self.slider_tsd_angle.setRange(0, 360)
-        self.slider_tsd_angle.setValue(45)
-        self.slider_tsd_angle.valueChanged.connect(lambda v: self.lbl_tsd_angle.setText(self.tr("analysis_tsd_angle", val=v)))
-        tsd_layout.addWidget(self.lbl_tsd_angle)
-        tsd_layout.addWidget(self.slider_tsd_angle)
+        # TSD Custom Angle Bins Table
+        self.table_tsd_bins = QTableWidget(len(self.current_angle_bins), 5)
+        self.table_tsd_bins.setHorizontalHeaderLabels(self.tr("analysis_tsd_headers"))
+        self.table_tsd_bins.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table_tsd_bins.verticalHeader().setVisible(False)
+        self.table_tsd_bins.setFixedHeight(150)
+        self.init_tsd_bins_table()
+        tsd_layout.addWidget(self.table_tsd_bins)
 
-        self.lbl_tsd_margin = QLabel("Core Radius Margin: 12 px")
-        self.slider_tsd_margin = QSlider(Qt.Orientation.Horizontal)
-        self.slider_tsd_margin.setRange(2, 40)
-        self.slider_tsd_margin.setValue(12)
-        self.slider_tsd_margin.valueChanged.connect(lambda v: self.lbl_tsd_margin.setText(self.tr("analysis_tsd_margin", val=v)))
-        tsd_layout.addWidget(self.lbl_tsd_margin)
-        tsd_layout.addWidget(self.slider_tsd_margin)
+        # Bin Action Buttons (Add, Delete, Reset, Apply)
+        bins_btn_grid = QGridLayout()
+        bins_btn_grid.setContentsMargins(0, 0, 0, 0)
+        bins_btn_grid.setSpacing(6)
 
-        self.btn_tsd_vector = QPushButton("🧭 Generate Angle Vector Map")
-        self.btn_tsd_vector.clicked.connect(lambda: QMessageBox.information(
-            self, "TSD Analysis", "TSD core angular vector calculation module initialized.\n(Feature scheduled for integration with 3D tracking)."
-        ))
-        tsd_layout.addWidget(self.btn_tsd_vector)
+        self.btn_add_bin = QPushButton(self.tr("btn_add_bin"))
+        self.btn_add_bin.clicked.connect(self.on_add_angle_bin)
+        bins_btn_grid.addWidget(self.btn_add_bin, 0, 0)
 
-        tab_layout.addWidget(self.grp_tsd_analysis)
-        tab_layout.addStretch(1)
+        self.btn_del_bin = QPushButton(self.tr("btn_del_bin"))
+        self.btn_del_bin.clicked.connect(self.on_delete_angle_bin)
+        bins_btn_grid.addWidget(self.btn_del_bin, 0, 1)
+
+        self.btn_reset_bins = QPushButton(self.tr("btn_reset_bins"))
+        self.btn_reset_bins.clicked.connect(self.on_reset_angle_bins)
+        bins_btn_grid.addWidget(self.btn_reset_bins, 1, 0)
+
+        self.btn_apply_bins = QPushButton(self.tr("btn_apply_bins"))
+        self.btn_apply_bins.setStyleSheet("font-weight: bold; background-color: #007acc; color: white;")
+        self.btn_apply_bins.clicked.connect(self.on_apply_angle_bins)
+        bins_btn_grid.addWidget(self.btn_apply_bins, 1, 1)
+
+        tsd_layout.addLayout(bins_btn_grid)
+        content_layout.addWidget(self.grp_tsd_analysis)
+
+        content_layout.addStretch(1)
+        scroll_area.setWidget(content_widget)
+        outer_layout.addWidget(scroll_area)
+
+    def init_tsd_bins_table(self):
+        """Populates the TSD custom angle bins table with current active bins."""
+        self.table_tsd_bins.setRowCount(len(self.current_angle_bins))
+        for r, b in enumerate(self.current_angle_bins):
+            item_lbl = QTableWidgetItem(str(b.get("label", "?")))
+            item_start = QTableWidgetItem(str(b.get("start", 0.0)))
+            item_end = QTableWidgetItem(str(b.get("end", 0.0)))
+            item_cnt = QTableWidgetItem("0")
+            item_ratio = QTableWidgetItem("0.0%")
+
+            item_cnt.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_ratio.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            # Count and Ratio are calculated, non-editable
+            item_cnt.setFlags(item_cnt.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            item_ratio.setFlags(item_ratio.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+            self.table_tsd_bins.setItem(r, 0, item_lbl)
+            self.table_tsd_bins.setItem(r, 1, item_start)
+            self.table_tsd_bins.setItem(r, 2, item_end)
+            self.table_tsd_bins.setItem(r, 3, item_cnt)
+            self.table_tsd_bins.setItem(r, 4, item_ratio)
+
+    def on_pixel_scale_changed(self, val: float):
+        """Updates pixel scaling factor and recalculates BPD lengths."""
+        self.pixel_size_um = float(val)
+        if self.bpd_defects:
+            for d in self.bpd_defects:
+                px = float(d.get("length_px", 0.0))
+                d["length_um"] = round(px * self.pixel_size_um, 2)
+            self.update_analysis_ui()
+            if self.last_results and "defects" in self.last_results:
+                self.canvas.add_defect_boxes(self.last_results["defects"])
+
+    def on_bpd_cell_clicked(self, row: int, col: int):
+        """Focuses and zooms canvas viewport on clicked BPD defect."""
+        if 0 <= row < len(self.bpd_defects):
+            d = self.bpd_defects[row]
+            self.canvas.focus_on_defect(d["bbox_xyxy"])
+
+    def on_add_angle_bin(self):
+        """Adds a new customizable angle bin row to the table."""
+        row_idx = self.table_tsd_bins.rowCount()
+        self.table_tsd_bins.insertRow(row_idx)
+
+        default_labels = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        new_label = default_labels[row_idx] if row_idx < len(default_labels) else f"Bin{row_idx+1}"
+
+        item_lbl = QTableWidgetItem(new_label)
+        item_start = QTableWidgetItem("0.0")
+        item_end = QTableWidgetItem("45.0")
+        item_cnt = QTableWidgetItem("0")
+        item_ratio = QTableWidgetItem("0.0%")
+
+        item_cnt.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item_ratio.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item_cnt.setFlags(item_cnt.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        item_ratio.setFlags(item_ratio.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+        self.table_tsd_bins.setItem(row_idx, 0, item_lbl)
+        self.table_tsd_bins.setItem(row_idx, 1, item_start)
+        self.table_tsd_bins.setItem(row_idx, 2, item_end)
+        self.table_tsd_bins.setItem(row_idx, 3, item_cnt)
+        self.table_tsd_bins.setItem(row_idx, 4, item_ratio)
+
+    def on_delete_angle_bin(self):
+        """Deletes selected angle bin row (preserving minimum 1 row)."""
+        current_row = self.table_tsd_bins.currentRow()
+        if self.table_tsd_bins.rowCount() <= 1:
+            QMessageBox.warning(
+                self,
+                "Warning" if self.current_lang == "EN" else "경고",
+                "At least 1 angle bin is required." if self.current_lang == "EN" else "최소 1개 이상의 각도 구간이 필요합니다.",
+            )
+            return
+        if current_row < 0:
+            current_row = self.table_tsd_bins.rowCount() - 1
+        self.table_tsd_bins.removeRow(current_row)
+        self.on_apply_angle_bins()
+
+    def on_reset_angle_bins(self):
+        """Resets custom angle bins back to default 4-way A~D quadrants."""
+        self.current_angle_bins = [dict(b) for b in DEFAULT_TSD_ANGLE_BINS]
+        self.init_tsd_bins_table()
+        self.on_apply_angle_bins()
+
+    def on_apply_angle_bins(self):
+        """Parses angle rules from table and re-classifies all detected TSD defects."""
+        new_bins = []
+        rows = self.table_tsd_bins.rowCount()
+        for r in range(rows):
+            lbl_item = self.table_tsd_bins.item(r, 0)
+            start_item = self.table_tsd_bins.item(r, 1)
+            end_item = self.table_tsd_bins.item(r, 2)
+
+            label = lbl_item.text().strip() if lbl_item else f"Bin{r+1}"
+            try:
+                start_val = float(start_item.text().strip()) if start_item else 0.0
+                end_val = float(end_item.text().strip()) if end_item else 360.0
+            except ValueError:
+                QMessageBox.warning(
+                    self,
+                    "Warning" if self.current_lang == "EN" else "경고",
+                    f"Row {r+1}: Angles must be valid floating point numbers." if self.current_lang == "EN" else f"{r+1}행: 시작 및 끝 각도는 숫자여야 합니다.",
+                )
+                return
+
+            new_bins.append({
+                "label": label,
+                "start": start_val % 360.0,
+                "end": end_val % 360.0 if end_val != 360.0 else 360.0,
+            })
+
+        self.current_angle_bins = new_bins
+
+        # Reclassify all TSD defects
+        if self.tsd_defects:
+            for d in self.tsd_defects:
+                ang = float(d.get("angle_deg", 0.0))
+                bin_label = classify_tsd_angle(ang, self.current_angle_bins)
+                d["angle_label"] = bin_label
+                d["sub_class"] = f"TSD-{bin_label}"
+
+            self.update_analysis_ui()
+            if self.last_results and "defects" in self.last_results:
+                self.canvas.add_defect_boxes(self.last_results["defects"])
+
+    def show_bpd_histogram(self):
+        """Opens modal popup dialog displaying BPD length distribution histogram."""
+        lengths = [d["length_um"] for d in self.bpd_defects if "length_um" in d]
+        if not lengths:
+            QMessageBox.information(
+                self,
+                "BPD Analysis",
+                "No BPD defects detected to plot histogram.\nPlease run defect analysis first." if self.current_lang == "EN" else "검출된 BPD 결함이 없습니다.\n먼저 결함 분석을 실행해주세요.",
+            )
+            return
+        dlg = BPDHistogramDialog(self, lengths, lang=self.current_lang)
+        dlg.exec()
+
+    def update_analysis_ui(self):
+        """Refreshes BPD and TSD analysis summary labels and table rows."""
+        # 1. Update BPD table & stats
+        self.table_bpd.setRowCount(len(self.bpd_defects))
+        lengths_um = []
+        for idx, d in enumerate(self.bpd_defects):
+            did = d.get("defect_id", idx + 1)
+            cx, cy = d.get("center_xy", (0, 0))
+            px_len = d.get("length_px", 0.0)
+            um_len = d.get("length_um", 0.0)
+            lengths_um.append(um_len)
+
+            item_id = QTableWidgetItem(f"#{did}")
+            item_coord = QTableWidgetItem(f"({cx:.0f}, {cy:.0f})")
+            item_px = QTableWidgetItem(f"{px_len:.1f}")
+            item_um = QTableWidgetItem(f"{um_len:.1f}")
+
+            item_id.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_coord.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_px.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_um.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            self.table_bpd.setItem(idx, 0, item_id)
+            self.table_bpd.setItem(idx, 1, item_coord)
+            self.table_bpd.setItem(idx, 2, item_px)
+            self.table_bpd.setItem(idx, 3, item_um)
+
+        bpd_cnt = len(lengths_um)
+        if bpd_cnt > 0:
+            mean_um = round(float(np.mean(lengths_um)), 1)
+            max_um = round(float(np.max(lengths_um)), 1)
+            min_um = round(float(np.min(lengths_um)), 1)
+        else:
+            mean_um, max_um, min_um = 0.0, 0.0, 0.0
+
+        self.lbl_bpd_summary.setText(
+            self.tr("analysis_bpd_summary", cnt=bpd_cnt, mean=mean_um, max=max_um, min=min_um)
+        )
+
+        # 2. Update TSD counts and ratios in table
+        tsd_counts = {str(b["label"]): 0 for b in self.current_angle_bins}
+        for d in self.tsd_defects:
+            lbl = d.get("angle_label", "")
+            if lbl in tsd_counts:
+                tsd_counts[lbl] += 1
+
+        total_tsd = len(self.tsd_defects)
+        for r, b in enumerate(self.current_angle_bins):
+            if r < self.table_tsd_bins.rowCount():
+                lbl = str(b["label"])
+                cnt = tsd_counts.get(lbl, 0)
+                ratio = (cnt / float(total_tsd) * 100.0) if total_tsd > 0 else 0.0
+                item_cnt = self.table_tsd_bins.item(r, 3)
+                item_ratio = self.table_tsd_bins.item(r, 4)
+                if item_cnt is not None:
+                    item_cnt.setText(str(cnt))
+                if item_ratio is not None:
+                    item_ratio.setText(f"{ratio:.1f}%")
 
     def init_grid_tab(self):
         """Initializes Tab 3: 3x3 Wafer Grid Density Map and Viewport Focus controls."""
@@ -1214,18 +1583,20 @@ class SiCDefectMainWindow(QMainWindow):
         self.btn_export.setText(self.tr("btn_export"))
 
         # Tab 2: Precision Analysis
+        self.lbl_pixel_scale.setText(self.tr("pixel_scale_label"))
         self.grp_bpd_analysis.setTitle(self.tr("analysis_bpd_title"))
         self.lbl_bpd_desc.setText(self.tr("analysis_bpd_desc"))
-        self.lbl_bpd_min.setText(self.tr("analysis_bpd_min", val=self.slider_bpd_min.value()))
-        self.lbl_bpd_max.setText(self.tr("analysis_bpd_max", val=self.slider_bpd_max.value()))
-        self.lbl_bpd_stats.setText(self.tr("analysis_bpd_stats"))
+        self.table_bpd.setHorizontalHeaderLabels(self.tr("analysis_bpd_headers"))
         self.btn_bpd_hist.setText(self.tr("analysis_bpd_btn"))
 
         self.grp_tsd_analysis.setTitle(self.tr("analysis_tsd_title"))
         self.lbl_tsd_desc.setText(self.tr("analysis_tsd_desc"))
-        self.lbl_tsd_angle.setText(self.tr("analysis_tsd_angle", val=self.slider_tsd_angle.value()))
-        self.lbl_tsd_margin.setText(self.tr("analysis_tsd_margin", val=self.slider_tsd_margin.value()))
-        self.btn_tsd_vector.setText(self.tr("analysis_tsd_btn"))
+        self.table_tsd_bins.setHorizontalHeaderLabels(self.tr("analysis_tsd_headers"))
+        self.btn_add_bin.setText(self.tr("btn_add_bin"))
+        self.btn_del_bin.setText(self.tr("btn_del_bin"))
+        self.btn_reset_bins.setText(self.tr("btn_reset_bins"))
+        self.btn_apply_bins.setText(self.tr("btn_apply_bins"))
+        self.update_analysis_ui()
 
         # Tab 3: Grid
         self.chk_grid_overlay.setText(self.tr("chk_grid_overlay"))
@@ -1307,7 +1678,10 @@ class SiCDefectMainWindow(QMainWindow):
             self.canvas.clear_overlays()
             self.btn_export.setEnabled(False)
             self.last_results = None
+            self.bpd_defects.clear()
+            self.tsd_defects.clear()
             self.init_summary_table()
+            self.update_analysis_ui()
 
             # Pre-compute base normalization and proxy cache
             self.prepare_slice_cache()
@@ -1444,7 +1818,7 @@ class SiCDefectMainWindow(QMainWindow):
             self.lbl_status.setText(self.tr("status_inferring", cur=current, tot=total, pct=pct))
 
     def on_inference_finished(self, results: Dict[str, Any]):
-        """Handles completion of inference, updates overlays and summary table."""
+        """Handles completion of inference, runs precision measurements, and updates UI."""
         self.btn_run.setEnabled(True)
         self.progress_bar.setValue(100)
         self.last_results = results
@@ -1452,6 +1826,18 @@ class SiCDefectMainWindow(QMainWindow):
         total = results.get("total_defects", 0)
         counts = results.get("counts", {})
         defects = results.get("defects", [])
+
+        # Precision Domain Measurements (BPD Length via PCA + TSD Angle via Moments)
+        if self.current_slice_2d is not None and defects:
+            analyze_domain_measurements(
+                image=self.current_slice_2d,
+                defects=defects,
+                pixel_size_um=self.pixel_size_um,
+                angle_bins=self.current_angle_bins,
+            )
+
+        self.bpd_defects = [d for d in defects if d.get("class_name") == "BPD"]
+        self.tsd_defects = [d for d in defects if d.get("class_name") == "TSD"]
 
         bpd_cnt = counts.get("BPD", 0)
         ted_cnt = counts.get("TED", 0)
@@ -1472,7 +1858,10 @@ class SiCDefectMainWindow(QMainWindow):
         self.table_summary.item(4, 1).setText(str(particle_cnt))
         self.table_summary.item(5, 1).setText(str(grand_total))
 
-        # Draw Bounding Boxes on Canvas
+        # Update Precision Analysis Tab UI (BPD table & TSD bins)
+        self.update_analysis_ui()
+
+        # Draw Bounding Boxes on Canvas with updated tooltips
         self.canvas.add_defect_boxes(defects)
 
         # Apply Checkbox Filter States
@@ -1497,7 +1886,7 @@ class SiCDefectMainWindow(QMainWindow):
     # --------------------------------------------------------------------------
 
     def export_report(self):
-        """Exports detected defects to user-specified CSV or JSON file."""
+        """Exports detected defects to user-specified CSV or JSON file with precision metrics."""
         if not self.last_results:
             return
 
@@ -1523,20 +1912,42 @@ class SiCDefectMainWindow(QMainWindow):
         else:
             with open(save_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                writer.writerow(["Defect_ID", "Class_Name", "Confidence", "Center_X", "Center_Y", "BBox_X1", "BBox_Y1", "BBox_X2", "BBox_Y2", "Width", "Height"])
+                writer.writerow([
+                    "Defect_ID",
+                    "Class_ID",
+                    "Class_Name",
+                    "Sub_Class",
+                    "Confidence",
+                    "Center_X",
+                    "Center_Y",
+                    "BBox_X1",
+                    "BBox_Y1",
+                    "BBox_X2",
+                    "BBox_Y2",
+                    "Width",
+                    "Height",
+                    "Length_um",
+                    "TSD_Angle_deg",
+                    "TSD_Angle_Label",
+                ])
                 for d in defects:
                     writer.writerow([
-                        d["defect_id"],
-                        d["class_name"],
-                        d["confidence"],
-                        d["center_xy"][0],
-                        d["center_xy"][1],
-                        d["bbox_xyxy"][0],
-                        d["bbox_xyxy"][1],
-                        d["bbox_xyxy"][2],
-                        d["bbox_xyxy"][3],
-                        d["size"][0],
-                        d["size"][1],
+                        d.get("defect_id", 0),
+                        d.get("class_id", 0),
+                        d.get("class_name", ""),
+                        d.get("sub_class", d.get("class_name", "")),
+                        d.get("confidence", 0.0),
+                        d.get("center_xy", [0, 0])[0],
+                        d.get("center_xy", [0, 0])[1],
+                        d.get("bbox_xyxy", [0, 0, 0, 0])[0],
+                        d.get("bbox_xyxy", [0, 0, 0, 0])[1],
+                        d.get("bbox_xyxy", [0, 0, 0, 0])[2],
+                        d.get("bbox_xyxy", [0, 0, 0, 0])[3],
+                        d.get("size", [0, 0])[0],
+                        d.get("size", [0, 0])[1],
+                        d.get("length_um", "N/A"),
+                        d.get("angle_deg", "N/A"),
+                        d.get("angle_label", "N/A"),
                     ])
 
         QMessageBox.information(self, self.tr("export_success_title"), self.tr("export_success_msg", path=save_path))

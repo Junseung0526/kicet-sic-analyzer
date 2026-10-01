@@ -619,6 +619,278 @@ def visualize_wafer_defects(
     return out_file
 
 
+# Default 4-Direction Angle Bins for TSD Classification
+DEFAULT_TSD_ANGLE_BINS = [
+    {"label": "A", "start": 0.0, "end": 90.0},
+    {"label": "B", "start": 90.0, "end": 180.0},
+    {"label": "C", "start": 180.0, "end": 270.0},
+    {"label": "D", "start": 270.0, "end": 360.0},
+]
+
+
+def measure_bpd_length(
+    image: np.ndarray,
+    bbox_xyxy: List[float],
+    pixel_size_um: float = 2.5,
+) -> Dict[str, float]:
+    """Measures linear dislocation length of BPD using Principal Component Analysis (PCA).
+
+    Args:
+        image: Full wafer or patch image (2D grayscale or RGB).
+        bbox_xyxy: [x1, y1, x2, y2] bounding box coordinates.
+        pixel_size_um: Micrometers per pixel ratio (default: 2.5 um/px).
+
+    Returns:
+        Dictionary with length_px and length_um.
+    """
+    x1, y1, x2, y2 = bbox_xyxy
+    h, w = image.shape[:2]
+
+    # Crop with padding margin
+    margin = 4
+    cx1 = max(0, int(round(x1 - margin)))
+    cy1 = max(0, int(round(y1 - margin)))
+    cx2 = min(w, int(round(x2 + margin)))
+    cy2 = min(h, int(round(y2 + margin)))
+
+    crop = image[cy1:cy2, cx1:cx2]
+    if crop.size == 0:
+        box_w = max(1.0, x2 - x1)
+        box_h = max(1.0, y2 - y1)
+        diag = float(np.sqrt(box_w**2 + box_h**2))
+        return {"length_px": round(diag, 2), "length_um": round(diag * pixel_size_um, 2)}
+
+    # Convert to 8-bit grayscale
+    if crop.ndim == 3:
+        if crop.shape[2] in (3, 4):
+            gray = cv2.cvtColor(crop[:, :, :3], cv2.COLOR_RGB2GRAY)
+        else:
+            gray = crop[:, :, 0]
+    else:
+        gray = crop
+
+    if gray.dtype != np.uint8:
+        g_min, g_max = float(gray.min()), float(gray.max())
+        if g_max > g_min:
+            gray = np.clip((gray - g_min) / (g_max - g_min) * 255.0, 0, 255).astype(np.uint8)
+        else:
+            gray = np.zeros_like(gray, dtype=np.uint8)
+
+    # Enhance linear structures via adaptive deviation thresholding
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    median_val = float(np.median(blurred))
+    diff = np.abs(blurred.astype(np.float32) - median_val)
+    threshold = np.percentile(diff, 65)
+    mask = (diff >= threshold).astype(np.uint8) * 255
+
+    # Morphology closing to connect disjoint dislocation segments
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    pts = np.argwhere(mask > 0)  # [y, x]
+    if len(pts) >= 6:
+        pts_xy = pts[:, [1, 0]].astype(np.float32)  # [x, y]
+        try:
+            mean, eigenvectors = cv2.PCACompute(pts_xy, mean=None)
+            primary_axis = eigenvectors[0]
+            projected = np.dot(pts_xy - mean, primary_axis)
+            pca_len = float(np.max(projected) - np.min(projected))
+
+            # MinAreaRect check
+            rect = cv2.minAreaRect(pts_xy)
+            rect_len = max(rect[1][0], rect[1][1])
+            length_px = float(max(pca_len, rect_len, 2.0))
+        except Exception:
+            box_w = max(1.0, x2 - x1)
+            box_h = max(1.0, y2 - y1)
+            length_px = float(np.sqrt(box_w**2 + box_h**2))
+    else:
+        box_w = max(1.0, x2 - x1)
+        box_h = max(1.0, y2 - y1)
+        length_px = float(np.sqrt(box_w**2 + box_h**2))
+
+    length_um = length_px * pixel_size_um
+    return {
+        "length_px": round(length_px, 2),
+        "length_um": round(length_um, 2),
+    }
+
+
+def calculate_tsd_angle(
+    image: np.ndarray,
+    bbox_xyxy: List[float],
+) -> float:
+    """Calculates directional propagation angle (0 to 360 deg) of TSD core using image moments.
+
+    Args:
+        image: Full wafer or patch image.
+        bbox_xyxy: [x1, y1, x2, y2] bounding box coordinates.
+
+    Returns:
+        Angle in degrees [0.0, 360.0).
+    """
+    x1, y1, x2, y2 = bbox_xyxy
+    h, w = image.shape[:2]
+
+    margin = 3
+    cx1 = max(0, int(round(x1 - margin)))
+    cy1 = max(0, int(round(y1 - margin)))
+    cx2 = min(w, int(round(x2 + margin)))
+    cy2 = min(h, int(round(y2 + margin)))
+
+    crop = image[cy1:cy2, cx1:cx2]
+    if crop.size == 0:
+        return 0.0
+
+    if crop.ndim == 3:
+        if crop.shape[2] in (3, 4):
+            gray = cv2.cvtColor(crop[:, :, :3], cv2.COLOR_RGB2GRAY)
+        else:
+            gray = crop[:, :, 0]
+    else:
+        gray = crop
+
+    if gray.dtype != np.uint8:
+        g_min, g_max = float(gray.min()), float(gray.max())
+        if g_max > g_min:
+            gray = np.clip((gray - g_min) / (g_max - g_min) * 255.0, 0, 255).astype(np.uint8)
+        else:
+            gray = np.zeros_like(gray, dtype=np.uint8)
+
+    ch, cw = gray.shape[:2]
+    mid_x, mid_y = cw / 2.0, ch / 2.0
+
+    # Intensity deviation weight emphasizing asymmetric core & tail
+    weight = np.abs(gray.astype(np.float32) - float(np.mean(gray)))
+    sum_w = float(np.sum(weight))
+
+    if sum_w > 1e-4:
+        grid_y, grid_x = np.indices((ch, cw))
+        dx = float(np.sum((grid_x - mid_x) * weight)) / sum_w
+        dy = float(np.sum((grid_y - mid_y) * weight)) / sum_w
+
+        # If centroid offset is distinct, compute vector angle
+        if abs(dx) > 0.08 or abs(dy) > 0.08:
+            deg = float(np.degrees(np.arctan2(dy, dx)))
+            angle = (deg + 360.0) % 360.0
+            return round(angle, 1)
+
+    # Secondary fallback: 2nd-order orientation moment
+    m = cv2.moments(weight)
+    if m["m00"] > 1e-4:
+        mu20, mu02, mu11 = m["mu20"], m["mu02"], m["mu11"]
+        deg = float(np.degrees(0.5 * np.arctan2(2.0 * mu11, mu20 - mu02)))
+        angle = (deg + 360.0) % 360.0
+        return round(angle, 1)
+
+    return 0.0
+
+
+def classify_tsd_angle(
+    angle_deg: float,
+    angle_bins: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """Maps continuous angle (0-360 deg) to custom discrete directional rule bin.
+
+    Args:
+        angle_deg: Angle in degrees [0, 360).
+        angle_bins: List of dicts specifying label, start, and end angles.
+
+    Returns:
+        Matching bin label string (e.g. 'A', 'B', 'C', 'D' or custom name).
+    """
+    bins = angle_bins if angle_bins is not None else DEFAULT_TSD_ANGLE_BINS
+    norm_angle = (float(angle_deg) + 360.0) % 360.0
+
+    for b in bins:
+        start = float(b.get("start", 0.0))
+        end = float(b.get("end", 360.0))
+        label = str(b.get("label", "?"))
+
+        if start <= end:
+            if start <= norm_angle < end or (end >= 360.0 and norm_angle >= start):
+                return label
+        else:
+            # Wrap-around case (e.g. 315° to 45°)
+            if norm_angle >= start or norm_angle < end:
+                return label
+
+    return bins[0]["label"] if bins else "A"
+
+
+def analyze_domain_measurements(
+    image: np.ndarray,
+    defects: List[Dict[str, Any]],
+    pixel_size_um: float = 2.5,
+    angle_bins: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Performs domain-specific precision measurements:
+
+    1. BPD length profiling (px & um via PCA).
+    2. TSD 4-way / custom angle bin classification.
+
+    Args:
+        image: Full wafer image array.
+        defects: List of defect dictionaries.
+        pixel_size_um: Micrometers per pixel scaling factor.
+        angle_bins: Custom angle rule bins for TSD.
+
+    Returns:
+        Structured analysis summary with enriched defect items.
+    """
+    bins = angle_bins if angle_bins is not None else DEFAULT_TSD_ANGLE_BINS
+    bpd_lengths_um: List[float] = []
+    tsd_bin_counts: Dict[str, int] = {str(b["label"]): 0 for b in bins}
+
+    for d in defects:
+        cname = d.get("class_name", "")
+        bbox = d.get("bbox_xyxy", [0, 0, 0, 0])
+
+        if cname == "BPD":
+            res = measure_bpd_length(image, bbox, pixel_size_um=pixel_size_um)
+            d["length_px"] = res["length_px"]
+            d["length_um"] = res["length_um"]
+            bpd_lengths_um.append(res["length_um"])
+
+        elif cname == "TSD":
+            ang = calculate_tsd_angle(image, bbox)
+            bin_label = classify_tsd_angle(ang, bins)
+            d["angle_deg"] = ang
+            d["angle_label"] = bin_label
+            d["sub_class"] = f"TSD-{bin_label}"
+            tsd_bin_counts[bin_label] = tsd_bin_counts.get(bin_label, 0) + 1
+
+    # BPD Statistics
+    if bpd_lengths_um:
+        bpd_stats = {
+            "count": len(bpd_lengths_um),
+            "mean_um": round(float(np.mean(bpd_lengths_um)), 2),
+            "max_um": round(float(np.max(bpd_lengths_um)), 2),
+            "min_um": round(float(np.min(bpd_lengths_um)), 2),
+            "std_um": round(float(np.std(bpd_lengths_um)), 2),
+        }
+    else:
+        bpd_stats = {"count": 0, "mean_um": 0.0, "max_um": 0.0, "min_um": 0.0, "std_um": 0.0}
+
+    # TSD Statistics
+    total_tsd = sum(tsd_bin_counts.values())
+    tsd_stats = {
+        "count": total_tsd,
+        "bin_counts": tsd_bin_counts,
+        "bin_ratios": {
+            k: round((v / float(total_tsd)) * 100.0, 1) if total_tsd > 0 else 0.0
+            for k, v in tsd_bin_counts.items()
+        },
+    }
+
+    return {
+        "pixel_size_um": pixel_size_um,
+        "bpd_stats": bpd_stats,
+        "tsd_stats": tsd_stats,
+        "angle_bins": bins,
+    }
+
+
 def export_defect_reports(
     results: Dict[str, Any],
     output_base: Union[str, Path] = "runs/detect/wafer_defects",
@@ -638,21 +910,42 @@ def export_defect_reports(
     defects = results.get("defects", [])
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Defect_ID", "Class_ID", "Class_Name", "Confidence", "Center_X", "Center_Y", "BBox_X1", "BBox_Y1", "BBox_X2", "BBox_Y2", "Width", "Height"])
+        writer.writerow([
+            "Defect_ID",
+            "Class_ID",
+            "Class_Name",
+            "Sub_Class",
+            "Confidence",
+            "Center_X",
+            "Center_Y",
+            "BBox_X1",
+            "BBox_Y1",
+            "BBox_X2",
+            "BBox_Y2",
+            "Width",
+            "Height",
+            "Length_um",
+            "TSD_Angle_deg",
+            "TSD_Angle_Label",
+        ])
         for d in defects:
             writer.writerow([
-                d["defect_id"],
-                d["class_id"],
-                d["class_name"],
-                d["confidence"],
-                d["center_xy"][0],
-                d["center_xy"][1],
-                d["bbox_xyxy"][0],
-                d["bbox_xyxy"][1],
-                d["bbox_xyxy"][2],
-                d["bbox_xyxy"][3],
-                d["size"][0],
-                d["size"][1],
+                d.get("defect_id", 0),
+                d.get("class_id", 0),
+                d.get("class_name", ""),
+                d.get("sub_class", d.get("class_name", "")),
+                d.get("confidence", 0.0),
+                d.get("center_xy", [0, 0])[0],
+                d.get("center_xy", [0, 0])[1],
+                d.get("bbox_xyxy", [0, 0, 0, 0])[0],
+                d.get("bbox_xyxy", [0, 0, 0, 0])[1],
+                d.get("bbox_xyxy", [0, 0, 0, 0])[2],
+                d.get("bbox_xyxy", [0, 0, 0, 0])[3],
+                d.get("size", [0, 0])[0],
+                d.get("size", [0, 0])[1],
+                d.get("length_um", "N/A"),
+                d.get("angle_deg", "N/A"),
+                d.get("angle_label", "N/A"),
             ])
 
     print(f"[Report] Defect reports exported to:")
