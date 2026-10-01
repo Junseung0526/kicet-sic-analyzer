@@ -104,6 +104,8 @@ def train_yolo(
         project=project,
         name=name,
         seed=seed,
+        workers=4,
+        cache=True,
         verbose=True,
         save=True,
         exist_ok=True,

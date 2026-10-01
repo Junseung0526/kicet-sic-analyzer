@@ -105,11 +105,12 @@ def run_prepare_dataset(
         overlap=overlap,
     )
     print(f"Dataset successfully compiled at: {dataset_dir}")
-    print(f"  - YAML config:       {yaml_path}")
-    print(f"  - Train patches:     {stats['train_samples']}")
-    print(f"  - Validation patches: {stats['val_samples']}")
+    print(f"  - YAML config:         {yaml_path}")
+    print(f"  - Total kept patches:  {stats['total_patches']} (Positive: {stats['positive_patches']}, 5% Negative: {stats['negative_patches_kept']} / Raw {stats['total_raw_negative_patches']})")
+    print(f"  - Train patches:       {stats['train_samples']}")
+    print(f"  - Validation patches:  {stats['val_samples']}")
     print(
-        f"  - Defect instances:  BPD={stats.get('defects_BPD', 0)}, "
+        f"  - Defect instances:    BPD={stats.get('defects_BPD', 0)}, "
         f"TED={stats.get('defects_TED', 0)}, "
         f"TSD={stats.get('defects_TSD', 0)}, "
         f"Particle={stats.get('defects_Particle', 0)}"

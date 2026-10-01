@@ -33,6 +33,7 @@ from src.preprocess import (
     CLASS_NAMES,
     get_slice_grid_coordinates,
     inspect_and_load_xrt,
+    normalize_16bit_to_8bit,
     patch_to_full_bbox,
     preprocess_xrt_image,
 )
@@ -88,8 +89,166 @@ def nms_boxes(
     return keep
 
 
-class WaferInferenceEngine:
-    """Inference engine performing sliding-window defect detection on large wafer images."""
+def compute_box_iou(boxA: List[float], boxB: List[float]) -> float:
+    """Computes Intersection over Union (IoU) of two [x1, y1, x2, y2] boxes."""
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+
+    inter_w = max(0.0, xB - xA)
+    inter_h = max(0.0, yB - yA)
+    inter_area = inter_w * inter_h
+
+    areaA = max(0.0, boxA[2] - boxA[0]) * max(0.0, boxA[3] - boxA[1])
+    areaB = max(0.0, boxB[2] - boxB[0]) * max(0.0, boxB[3] - boxB[1])
+    union_area = areaA + areaB - inter_area
+    if union_area <= 1e-6:
+        return 0.0
+    return inter_area / union_area
+
+
+def detect_surface_particles(
+    image: np.ndarray,
+    existing_defects: List[Dict[str, Any]],
+    min_area: int = 35,
+    max_area: int = 6000,
+    contrast_diff_thresh: float = 30.0,
+    max_aspect_ratio: float = 3.5,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """Hybrid rule-based surface particle / dust / contaminant detector.
+
+    Combines classical computer vision (local background subtraction + adaptive thresholding
+    + contour geometry filtering) with deep learning detections.
+    Identifies high-contrast non-crystal blobs and segregates them from BPD/TED/TSD.
+
+    Args:
+        image: Wafer image (8-bit or 16-bit, grayscale or RGB).
+        existing_defects: Deep learning detected defect list.
+        min_area: Minimum contour pixel area for a particle.
+        max_area: Maximum contour pixel area to exclude macroscopic border shadows.
+        contrast_diff_thresh: Intensity deviation threshold relative to local background.
+        max_aspect_ratio: Max aspect ratio (w/h or h/w) to prevent classifying linear BPDs as particles.
+
+    Returns:
+        Updated defect list including Particle detections, and updated per-class count dictionary.
+    """
+    # 1. Convert to 8-bit single-channel grayscale
+    if image.ndim == 3 and image.shape[2] in (3, 4):
+        gray = cv2.cvtColor(image[:, :, :3], cv2.COLOR_RGB2GRAY)
+    elif image.ndim == 3 and image.shape[0] in (3, 4):
+        gray = cv2.cvtColor(np.transpose(image[:3, :, :], (1, 2, 0)), cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image
+
+    if gray.dtype != np.uint8:
+        gray = normalize_16bit_to_8bit(gray)
+
+    h, w = gray.shape[:2]
+
+    # 2. Estimate smooth local background via fast boxFilter (O(1) per pixel)
+    ksize = 41
+    bg = cv2.boxFilter(gray, -1, (ksize, ksize))
+    diff = cv2.absdiff(gray, bg)
+
+    # 3. Dynamic contrast anomaly thresholding
+    step = max(1, min(h, w) // 512)
+    sub_diff = diff[::step, ::step].astype(np.float32)
+    mean_diff = float(np.mean(sub_diff))
+    std_diff = float(np.std(sub_diff))
+    thresh_val = max(contrast_diff_thresh, mean_diff + 2.8 * std_diff)
+
+    _, binary = cv2.threshold(diff, int(thresh_val), 255, cv2.THRESH_BINARY)
+
+    # 4. Morphological cleaning: remove single pixel speckles and connect fragmented blobs
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+
+    # 5. Extract candidate contours
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    candidate_particles: List[Dict[str, Any]] = []
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < min_area or area > max_area:
+            continue
+
+        bx, by, bw, bh = cv2.boundingRect(cnt)
+        ar = max(bw, bh) / max(1.0, min(bw, bh))
+        if ar > max_aspect_ratio:
+            # Exclude long linear dislocations (BPD)
+            continue
+
+        patch_diff = diff[by : by + bh, bx : bx + bw]
+        if patch_diff.size == 0:
+            continue
+        max_c = float(np.max(patch_diff))
+        if max_c < thresh_val:
+            continue
+
+        candidate_particles.append(
+            {
+                "bbox": [float(bx), float(by), float(bx + bw), float(by + bh)],
+                "area": area,
+                "center": [float(bx + bw / 2.0), float(by + bh / 2.0)],
+                "size": [float(bw), float(bh)],
+                "contrast": max_c,
+            }
+        )
+
+    # 6. Hybrid reconciliation with existing deep learning detections
+    updated_defects: List[Dict[str, Any]] = []
+
+    for d in existing_defects:
+        cname = d.get("class_name", "")
+        bbox = d.get("bbox_xyxy", [0, 0, 0, 0])
+        bw = bbox[2] - bbox[0]
+        bh = bbox[3] - bbox[1]
+        box_area = bw * bh
+
+        # Check if an existing defect is actually a large surface particle
+        if cname in ("TED", "TSD") and (max(bw, bh) >= 30 or box_area >= 700):
+            for cp in candidate_particles:
+                if compute_box_iou(bbox, cp["bbox"]) > 0.25:
+                    d["class_id"] = 3
+                    d["class_name"] = "Particle"
+                    break
+
+        updated_defects.append(d)
+
+    # 7. Add unmatched candidate particles as new Particle defects
+    existing_boxes = [d["bbox_xyxy"] for d in updated_defects]
+
+    for cp in candidate_particles:
+        is_covered = False
+        for ebox in existing_boxes:
+            if compute_box_iou(cp["bbox"], ebox) > 0.20:
+                is_covered = True
+                break
+        if not is_covered:
+            conf = round(float(np.clip(cp["contrast"] / 100.0 + 0.50, 0.75, 0.98)), 4)
+            updated_defects.append(
+                {
+                    "defect_id": len(updated_defects) + 1,
+                    "class_id": 3,
+                    "class_name": "Particle",
+                    "confidence": conf,
+                    "bbox_xyxy": [round(x, 1) for x in cp["bbox"]],
+                    "center_xy": [round(x, 1) for x in cp["center"]],
+                    "size": [round(x, 1) for x in cp["size"]],
+                }
+            )
+
+    # 8. Re-index IDs and compute updated counts
+    counts = {name: 0 for name in CLASS_NAMES.values()}
+    for idx, d in enumerate(updated_defects, 1):
+        d["defect_id"] = idx
+        cname = d.get("class_name", "Particle")
+        counts[cname] = counts.get(cname, 0) + 1
+
+    return updated_defects, counts
+
 
 class WaferInferenceEngine:
     """Inference engine performing sliding-window defect detection using PyTorch YOLO."""
@@ -148,6 +307,7 @@ class WaferInferenceEngine:
         patch_size: int = 640,
         overlap: float = 0.2,
         progress_callback: Optional[Callable[[int, int], None]] = None,
+        detect_particles: bool = True,
     ) -> Dict[str, Any]:
         """Runs sliding-window inference across the entire wafer image."""
         h, w = image.shape[:2]
@@ -213,6 +373,13 @@ class WaferInferenceEngine:
                     }
                 )
                 counts[class_name] += 1
+
+        # Hybrid Surface Particle Detection
+        if detect_particles:
+            filtered_defects, counts = detect_surface_particles(
+                image=image,
+                existing_defects=filtered_defects,
+            )
 
         return {
             "image_shape": [h, w],
@@ -341,6 +508,7 @@ class OnnxWaferInferenceEngine:
         patch_size: int = 640,
         overlap: float = 0.2,
         progress_callback: Optional[Callable[[int, int], None]] = None,
+        detect_particles: bool = True,
     ) -> Dict[str, Any]:
         """Runs sliding-window ONNX inference across the entire wafer image."""
         h, w = image.shape[:2]
@@ -406,6 +574,13 @@ class OnnxWaferInferenceEngine:
                     }
                 )
                 counts[class_name] += 1
+
+        # Hybrid Surface Particle Detection
+        if detect_particles:
+            filtered_defects, counts = detect_surface_particles(
+                image=image,
+                existing_defects=filtered_defects,
+            )
 
         print(f"[ONNX Inference Complete] Total defects detected: {len(filtered_defects)}")
         for cname, ctotal in counts.items():

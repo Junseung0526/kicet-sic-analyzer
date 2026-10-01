@@ -89,7 +89,7 @@ def build_yolo_dataset(
     patch_size: int = 640,
     overlap: float = 0.2,
     val_ratio: float = 0.2,
-    background_ratio: float = 0.3,
+    bg_subsample_ratio: float = 0.05,
     seed: int = 42,
 ) -> Tuple[Path, Dict[str, int]]:
     """Builds a complete YOLO train/val dataset from raw XRT files and annotations.
@@ -99,7 +99,7 @@ def build_yolo_dataset(
     2. Convert 16-bit to 8-bit CLAHE.
     3. Slice into overlapping patches.
     4. Project full-wafer defect boxes into patch local coordinates & YOLO format.
-    5. Balance positive patches and negative background patches.
+    5. Balance positive patches (100% kept) and negative background patches (5% subsampled).
     6. Split into train and val splits and export images and labels.
     7. Generate dataset YAML.
 
@@ -109,7 +109,7 @@ def build_yolo_dataset(
         patch_size: Square patch dimensions (default: 640).
         overlap: Overlap fraction for sliding window (default: 0.2).
         val_ratio: Validation split fraction (default: 0.2).
-        background_ratio: Max ratio of background (empty) patches to positive patches.
+        bg_subsample_ratio: Ratio of pure background patches to keep (default: 0.05 = 5%).
         seed: Random seed for split reproducibility.
 
     Returns:
@@ -203,10 +203,10 @@ def build_yolo_dataset(
             else:
                 negative_samples.append((base_name, patch_img, []))
 
-    # Subsample negative background patches to maintain realistic yet balanced data
-    max_negatives = max(1, int(len(positive_samples) * background_ratio))
+    # Subsample negative background patches: keep only bg_subsample_ratio (5%)
+    num_negatives = max(1, int(len(negative_samples) * bg_subsample_ratio))
     rng.shuffle(negative_samples)
-    selected_negatives = negative_samples[:max_negatives]
+    selected_negatives = negative_samples[:num_negatives]
 
     all_samples = positive_samples + selected_negatives
     rng.shuffle(all_samples)
@@ -245,7 +245,9 @@ def build_yolo_dataset(
     stats = {
         "total_patches": len(all_samples),
         "positive_patches": len(positive_samples),
-        "negative_patches": len(selected_negatives),
+        "total_raw_negative_patches": len(negative_samples),
+        "negative_patches_kept": len(selected_negatives),
+        "bg_subsample_ratio": bg_subsample_ratio,
         "train_samples": n_train,
         "val_samples": n_val,
         **{f"defects_{k}": v for k, v in defect_counts.items()},
