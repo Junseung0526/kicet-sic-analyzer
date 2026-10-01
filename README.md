@@ -89,26 +89,41 @@ python main.py --mode all --epochs 1
    ```bash
    python main.py --mode mock
    ```
-2. **전처리 및 패치 슬라이싱**:
+3. **실제 KICET 2D XRT 및 ImageJ ROI 데이터 임포트**:
+   ```bash
+   python main.py --mode import
+   ```
+4. **전처리 및 패치 슬라이싱**:
    ```bash
    python main.py --mode preprocess
    ```
-3. **YOLO 데이터셋 구성**:
+5. **YOLO 데이터셋 구성**:
    ```bash
    python main.py --mode dataset
    ```
-4. **모델 학습 및 ONNX 변환**:
+6. **모델 학습 및 ONNX 변환 (Mac MPS 가속)**:
    ```bash
    python main.py --mode train --epochs 50 --batch-size 16 --device mps
    ```
-5. **풀 웨이퍼 추론 및 리포트/시각화 생성**:
+7. **풀 웨이퍼 단독 추론 (CLI)**:
    ```bash
-   python main.py --mode infer --test-image data/raw/your_wafer.tif --model-path runs/detect/sic_defect_train/weights/best.pt
+   python main.py --mode infer --test-image data/raw/kicet_after_annealing_1.tif --conf 0.20
+   ```
+8. **PyQt6 크로스 플랫폼 데스크톱 GUI 실행**:
+   ```bash
+   python main.py --mode gui
+   # 또는 특정 이미지 지정 실행
+   python main.py --mode gui --test-image data/raw/kicet_after_annealing_1.tif
    ```
 
 ---
 
-## 5. 향후 계획 (Windows EXE 데스크톱 앱 배포)
-- 2D 파이프라인 검증 완료 후 3D TIFF 스택(깊이별 전위 추적) 모듈 확장
-- PyQt6 / PySide6 기반 데스크톱 UI 제작 (웨이퍼 로드, 실시간 검출, 불량률 판정, 리포트 출력)
-- GitHub Actions를 통한 Windows 환경 ONNX Runtime + PyInstaller 무인 빌드 파이프라인 구축
+## 5. 데스크톱 GUI (PyQt6 & ONNX Runtime)
+
+- **캔버스 뷰어**: 초대형 1.5억 화소(12,000x12,000) XRT 이미지를 마우스 휠 커서 중심 줌(확대/축소) 및 드래그 패닝 지원
+- **실시간 명암 대비(Brightness & Contrast) 조절**: 16-bit 영상의 미세 전위선 식별을 위한 동적 슬라이더
+- **3D TIFF 스택 프레임 슬라이더**: 깊이별 3D 스택 레이어 전환 지원
+- **비동기 분석(QThread)**: 대형 영상 추론 중 UI 프리징 방지 및 실시간 진행률 표시
+- **ONNX Runtime 가벼운 런타임**: Windows 배포 시 무거운 PyTorch 없이도 `best.onnx` 기반의 고속 독립 실행 지원
+- **클래스별(BPD, TED, TSD) 오버레이 토글**: 결함 종류별 바운딩 박스 On/Off 및 결함 수 요약 표, CSV/JSON 보고서 저장
+

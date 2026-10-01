@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
+import roifile
 import tifffile
 
 
@@ -51,9 +52,31 @@ def inspect_and_load_xrt(
     dtype_str = str(raw_data.dtype)
     val_min = float(np.min(raw_data))
     val_max = float(np.max(raw_data))
-    is_3d = raw_data.ndim >= 3
+    # Determine if truly a 3D depth stack vs 2D color image
+    is_3d = False
+    num_slices = 1
 
-    num_slices = original_shape[0] if is_3d else 1
+    if raw_data.ndim == 2:
+        is_3d = False
+        num_slices = 1
+    elif raw_data.ndim == 3:
+        # Check if the 3rd dimension is color channels (RGB/RGBA)
+        if original_shape[2] in (1, 3, 4):
+            is_3d = False
+            num_slices = 1
+        elif original_shape[0] in (1, 3, 4) and original_shape[1] > 64 and original_shape[2] > 64:
+            # Channel-first 2D color image (C, H, W) -> transpose to (H, W, C)
+            raw_data = np.transpose(raw_data, (1, 2, 0))
+            original_shape = raw_data.shape
+            is_3d = False
+            num_slices = 1
+        else:
+            # Truly a 3D depth stack of 2D slices (e.g., shape = (D, H, W))
+            is_3d = True
+            num_slices = original_shape[0]
+    elif raw_data.ndim >= 4:
+        is_3d = True
+        num_slices = original_shape[0]
 
     meta: Dict[str, Any] = {
         "filepath": str(path),
@@ -84,16 +107,30 @@ def normalize_16bit_to_8bit(
 ) -> np.ndarray:
     """Converts 16-bit (or arbitrary dynamic range) images into safe 8-bit (uint8).
 
+    Supports both single-channel (grayscale) and multi-channel (RGB) inputs.
+
     Args:
-        image: Input grayscale image (typically uint16 or float32).
+        image: Input image array (uint16, uint8, float32, etc.).
         use_percentile: Whether to clip extreme outliers using percentiles.
         p_min: Lower percentile cutoff (e.g. 0.5%).
         p_max: Upper percentile cutoff (e.g. 99.5%).
 
     Returns:
-        8-bit grayscale image (uint8, 0~255).
+        8-bit single-channel grayscale image (uint8, 0~255).
     """
-    img_float = image.astype(np.float32)
+    # Convert multi-channel to grayscale if needed
+    if image.ndim == 3 and image.shape[2] in (3, 4):
+        img_gray = cv2.cvtColor(image[:, :, :3], cv2.COLOR_RGB2GRAY)
+    elif image.ndim == 3 and image.shape[0] in (3, 4):
+        img_gray = cv2.cvtColor(np.transpose(image[:3, :, :], (1, 2, 0)), cv2.COLOR_RGB2GRAY)
+    else:
+        img_gray = image
+
+    # If already uint8 and values span a normal range, return directly
+    if img_gray.dtype == np.uint8 and not use_percentile:
+        return img_gray
+
+    img_float = img_gray.astype(np.float32)
 
     if use_percentile:
         low = np.percentile(img_float, p_min)
@@ -104,7 +141,7 @@ def normalize_16bit_to_8bit(
 
     if high <= low:
         # Uniform or degenerated image
-        return np.zeros(image.shape, dtype=np.uint8)
+        return np.zeros(img_gray.shape[:2], dtype=np.uint8)
 
     # Clip and scale to 0~255
     clipped = np.clip(img_float, low, high)
@@ -145,16 +182,207 @@ def preprocess_xrt_image(
     """End-to-end preprocessing pipeline: 16-bit Normalization + CLAHE.
 
     Args:
-        image: Raw XRT image array.
+        image: Raw XRT image array (grayscale or RGB, uint8 or uint16).
         clip_limit: CLAHE clip limit.
         use_percentile: Outlier clipping toggle.
 
     Returns:
-        Preprocessed 8-bit image ready for DL backbones (YOLO).
+        Preprocessed 8-bit single-channel image ready for DL backbones (YOLO).
     """
     img_8bit = normalize_16bit_to_8bit(image, use_percentile=use_percentile)
     enhanced = apply_clahe(img_8bit, clip_limit=clip_limit)
     return enhanced
+
+
+# Default bounding box half-sizes for point-annotated ImageJ ROIs
+DEFECT_BOX_SIZES = {
+    0: 40,  # BPD: 40x40 box (lengthy dislocation line)
+    1: 16,  # TED: 16x16 box (small dot)
+    2: 30,  # TSD: 30x30 box (distinct core & halo)
+}
+
+
+def parse_kicet_roi_file(
+    roi_path: Union[str, Path],
+    img_shape: Tuple[int, int],
+    start_id: int = 1,
+) -> List[Dict[str, Any]]:
+    """Parses an ImageJ .roi file from KICET annotations and converts to bounding boxes.
+
+    Args:
+        roi_path: Path to the .roi file.
+        img_shape: (height, width) of the corresponding wafer image.
+        start_id: Starting integer ID for detected defects.
+
+    Returns:
+        List of defect dictionaries in standard full-image coordinates.
+    """
+    path = Path(roi_path)
+    if not path.exists():
+        return []
+
+    fname_upper = path.name.upper()
+    if "BPD" in fname_upper:
+        class_id = 0
+    elif "TSD" in fname_upper:
+        class_id = 2
+    elif "TED" in fname_upper:
+        class_id = 1
+    else:
+        # Ignore unknown ROIs or assign default
+        return []
+
+    class_name = CLASS_NAMES[class_id]
+    box_size = DEFECT_BOX_SIZES[class_id]
+    half_box = box_size / 2.0
+    h, w = img_shape[:2]
+
+    defects: List[Dict[str, Any]] = []
+
+    try:
+        roi = roifile.roiread(str(path))
+        if roi is None:
+            return []
+
+        # Multi-point or single coordinate extraction
+        if hasattr(roi, "coordinates") and roi.coordinates() is not None:
+            coords = np.array(roi.coordinates())
+            # Shape can be (N, 2) where coords are [x, y]
+            if coords.ndim == 1 and len(coords) == 2:
+                coords = coords.reshape(1, 2)
+            elif coords.ndim == 2:
+                pass
+            else:
+                coords = np.empty((0, 2))
+        else:
+            # Fallback to bounding box center
+            cx = (roi.left + roi.right) / 2.0
+            cy = (roi.top + roi.bottom) / 2.0
+            coords = np.array([[cx, cy]])
+
+        for pt in coords:
+            cx, cy = float(pt[0]), float(pt[1])
+            bx1 = max(0.0, cx - half_box)
+            by1 = max(0.0, cy - half_box)
+            bx2 = min(float(w), cx + half_box)
+            by2 = min(float(h), cy + half_box)
+
+            defects.append(
+                {
+                    "defect_id": start_id + len(defects),
+                    "class_id": class_id,
+                    "class_name": class_name,
+                    "bbox": [round(bx1, 1), round(by1, 1), round(bx2, 1), round(by2, 1)],
+                    "center": [round(cx, 1), round(cy, 1)],
+                }
+            )
+    except Exception as e:
+        print(f"[Warning] Failed to parse ROI {path.name}: {e}")
+
+    return defects
+
+
+def import_kicet_dataset(
+    source_dir: Union[str, Path] = "/Volumes/T9 Junseung/세라믹 기술원 데이터/XRT 2D",
+    target_raw_dir: Union[str, Path] = "data/raw",
+    use_symlink: bool = True,
+) -> List[Dict[str, Any]]:
+    """Discovers KICET raw 2D XRT TIFF files and their ImageJ ROIs, and imports them to data/raw.
+
+    Args:
+        source_dir: Base directory where KICET data resides.
+        target_raw_dir: Destination data/raw directory.
+        use_symlink: If True, creates symlinks to large TIFFs instead of copying.
+
+    Returns:
+        List of imported dataset summaries.
+    """
+    src_path = Path(source_dir)
+    dst_path = Path(target_raw_dir)
+    dst_path.mkdir(parents=True, exist_ok=True)
+
+    if not src_path.exists():
+        raise FileNotFoundError(f"KICET source directory not found: {src_path}")
+
+    # Find all TIFF files in source directory
+    tiff_files = sorted(list(src_path.rglob("*.tif")) + list(src_path.rglob("*.tiff")))
+
+    imported_summary: List[Dict[str, Any]] = []
+
+    for idx, tiff_file in enumerate(tiff_files, 1):
+        parent_dir = tiff_file.parent
+
+        # Inspect image shape
+        try:
+            img, meta = inspect_and_load_xrt(tiff_file)
+            img_shape = img.shape[:2]
+        except Exception as e:
+            print(f"[Skip] Could not read {tiff_file}: {e}")
+            continue
+
+        # Look for corresponding ROI files in the same directory
+        roi_files = sorted(list(parent_dir.glob("*.roi")))
+
+        all_defects: List[Dict[str, Any]] = []
+        for rfile in roi_files:
+            parsed = parse_kicet_roi_file(rfile, img_shape, start_id=len(all_defects) + 1)
+            all_defects.extend(parsed)
+
+        # Create standardized target file name
+        # E.g. "kicet_after_annealing_1.tif"
+        safe_stem = tiff_file.stem.strip().lower().replace(" ", "_")
+        parent_stem = parent_dir.name.strip().lower().replace(" ", "_")
+        if parent_stem not in safe_stem:
+            dest_name = f"kicet_{parent_stem}_{safe_stem}"
+        else:
+            dest_name = f"kicet_{safe_stem}"
+
+        dest_tif = dst_path / f"{dest_name}.tif"
+        dest_json = dst_path / f"{dest_name}.json"
+
+        # Link or copy TIFF
+        if not dest_tif.exists():
+            if use_symlink:
+                try:
+                    dest_tif.symlink_to(tiff_file.resolve())
+                except OSError:
+                    import shutil
+                    shutil.copy2(tiff_file, dest_tif)
+            else:
+                import shutil
+                shutil.copy2(tiff_file, dest_tif)
+
+        # Write ground truth JSON
+        counts = {name: 0 for name in CLASS_NAMES.values()}
+        for d in all_defects:
+            counts[d["class_name"]] = counts.get(d["class_name"], 0) + 1
+
+        with open(dest_json, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "image_file": dest_tif.name,
+                    "original_path": str(tiff_file),
+                    "shape": list(img_shape),
+                    "num_defects": len(all_defects),
+                    "counts": counts,
+                    "defects": all_defects,
+                },
+                f,
+                indent=2,
+            )
+
+        summary_item = {
+            "image": dest_tif.name,
+            "shape": list(img_shape),
+            "num_defects": len(all_defects),
+            "counts": counts,
+            "rois_found": len(roi_files),
+        }
+        imported_summary.append(summary_item)
+        print(f"[Imported] {dest_tif.name}: {len(all_defects)} defects (BPD={counts['BPD']}, TED={counts['TED']}, TSD={counts['TSD']})")
+
+    return imported_summary
+
 
 
 def generate_mock_xrt_data(

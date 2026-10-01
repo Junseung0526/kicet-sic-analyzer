@@ -169,7 +169,18 @@ def build_yolo_dataset(
 
             yolo_lines: List[str] = []
 
-            for d in defects:
+            # Spatial pre-filtering to accelerate matching on large images
+            patch_margin = 60
+            px2 = px1 + patch_size
+            py2 = py1 + patch_size
+
+            nearby_defects = [
+                d for d in defects
+                if (px1 - patch_margin <= d["bbox"][2] and d["bbox"][0] <= px2 + patch_margin and
+                    py1 - patch_margin <= d["bbox"][3] and d["bbox"][1] <= py2 + patch_margin)
+            ]
+
+            for d in nearby_defects:
                 class_id = int(d["class_id"])
                 fbox = tuple(d["bbox"])  # (X1, Y1, X2, Y2)
 

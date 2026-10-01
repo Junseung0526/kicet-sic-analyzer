@@ -16,14 +16,17 @@ import sys
 from typing import Optional
 
 from src.dataset import build_yolo_dataset, create_yolo_yaml
+from src.gui import launch_gui
 from src.inference import WaferInferenceEngine, export_defect_reports, visualize_wafer_defects
 from src.preprocess import (
     generate_mock_xrt_data,
+    import_kicet_dataset,
     inspect_and_load_xrt,
     preprocess_xrt_image,
     slice_patches,
 )
 from src.train import get_default_device, train_yolo
+
 
 
 def run_generate_mock(
@@ -184,9 +187,15 @@ def main():
     parser = argparse.ArgumentParser(description="SiC Wafer Defect Detection & Classification Pipeline")
     parser.add_argument(
         "--mode",
-        choices=["all", "mock", "preprocess", "dataset", "train", "infer"],
+        choices=["all", "gui", "mock", "import", "preprocess", "dataset", "train", "infer"],
         default="all",
         help="Pipeline mode to execute (default: 'all' for dry-run verification)",
+    )
+    parser.add_argument(
+        "--kicet-dir",
+        type=str,
+        default="/Volumes/T9 Junseung/세라믹 기술원 데이터/XRT 2D",
+        help="Source directory of real KICET XRT 2D data",
     )
     parser.add_argument("--raw-dir", type=str, default="data/raw", help="Path to raw data directory")
     parser.add_argument("--sliced-dir", type=str, default="data/sliced", help="Path to sliced patches directory")
@@ -219,9 +228,29 @@ def main():
     print(f"Compute Device detected: {get_default_device(args.device)}")
     print(f"Raw data status: {len(raw_files)} files found in {raw_dir}")
 
+    # Mode 0: Interactive PyQt6 GUI
+    if args.mode == "gui":
+        init_img = Path(args.test_image) if args.test_image else (raw_files[0] if raw_files else None)
+        print(f"\n[Step: Launching PyQt6 Desktop GUI]")
+        if init_img:
+            print(f"Pre-loading image: {init_img.name}")
+        launch_gui(image_path=init_img)
+        return
+
     # Mode 1: Mock data generation
     if args.mode == "mock":
         run_generate_mock(raw_dir)
+        return
+
+    # Mode 1.5: Import real KICET data
+    if args.mode == "import":
+        kicet_src = Path(args.kicet_dir)
+        if not kicet_src.exists():
+            print(f"[Error] KICET directory not found: {kicet_src}")
+            return
+        print(f"\n[Step: Importing KICET Real 2D XRT & ImageJ ROI annotations]")
+        imported = import_kicet_dataset(kicet_src, raw_dir, use_symlink=True)
+        print(f"Successfully imported {len(imported)} wafer datasets to {raw_dir}\n")
         return
 
     # Mode 2: Preprocess and slice

@@ -11,3 +11,5 @@ pyyaml>=6.0
 onnx>=1.15.0
 onnxruntime>=1.17.0
 onnxslim>=0.1.82
+roifile>=2024.1.1
+PyQt6>=6.6.0

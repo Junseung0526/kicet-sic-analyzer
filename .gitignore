@@ -42,6 +42,8 @@ data/raw/*.tif
 data/raw/*.tiff
 data/raw/*.TIF
 data/raw/*.TIFF
+data/mock_samples/*.tif
+data/mock_samples/*.tiff
 
 # IDE / OS
 .DS_Store
