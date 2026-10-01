@@ -108,30 +108,58 @@ def compute_box_iou(boxA: List[float], boxB: List[float]) -> float:
     return inter_area / union_area
 
 
+def is_box_overlapping_or_contained(
+    boxA: List[float],
+    boxB: List[float],
+    iou_thresh: float = 0.10,
+) -> bool:
+    """Checks if two boxes overlap significantly (IoU > thresh) or if either center is inside the other."""
+    # 1. IoU check
+    iou = compute_box_iou(boxA, boxB)
+    if iou > iou_thresh:
+        return True
+
+    # 2. Check if center of boxA is inside boxB
+    cxA = (boxA[0] + boxA[2]) / 2.0
+    cyA = (boxA[1] + boxA[3]) / 2.0
+    if boxB[0] <= cxA <= boxB[2] and boxB[1] <= cyA <= boxB[3]:
+        return True
+
+    # 3. Check if center of boxB is inside boxA
+    cxB = (boxB[0] + boxB[2]) / 2.0
+    cyB = (boxB[1] + boxB[3]) / 2.0
+    if boxA[0] <= cxB <= boxA[2] and boxA[1] <= cyB <= boxA[3]:
+        return True
+
+    return False
+
+
 def detect_surface_particles(
     image: np.ndarray,
     existing_defects: List[Dict[str, Any]],
-    min_area: int = 35,
-    max_area: int = 6000,
-    contrast_diff_thresh: float = 30.0,
-    max_aspect_ratio: float = 3.5,
+    min_area: int = 150,
+    max_area: int = 8000,
+    contrast_diff_thresh: float = 45.0,
+    max_aspect_ratio: float = 3.0,
+    iou_exclusion_thresh: float = 0.10,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """Hybrid rule-based surface particle / dust / contaminant detector.
 
-    Combines classical computer vision (local background subtraction + adaptive thresholding
-    + contour geometry filtering) with deep learning detections.
-    Identifies high-contrast non-crystal blobs and segregates them from BPD/TED/TSD.
+    Detects purely isolated, extreme-contrast surface flakes and foreign particles.
+    Guarantees zero interference with deep learning crystal defects (BPD, TED, TSD):
+    Any candidate blob overlapping with or containing/contained by a DL detection is strictly excluded.
 
     Args:
         image: Wafer image (8-bit or 16-bit, grayscale or RGB).
-        existing_defects: Deep learning detected defect list.
-        min_area: Minimum contour pixel area for a particle.
+        existing_defects: Deep learning detected defect list (never overwritten).
+        min_area: Minimum contour pixel area (default 150 to ignore micro cores of TED/TSD).
         max_area: Maximum contour pixel area to exclude macroscopic border shadows.
         contrast_diff_thresh: Intensity deviation threshold relative to local background.
-        max_aspect_ratio: Max aspect ratio (w/h or h/w) to prevent classifying linear BPDs as particles.
+        max_aspect_ratio: Max aspect ratio (w/h or h/w) to exclude linear dislocations (BPD).
+        iou_exclusion_thresh: IoU overlap threshold above which particle candidate is rejected.
 
     Returns:
-        Updated defect list including Particle detections, and updated per-class count dictionary.
+        Updated defect list including pure Particle detections, and updated per-class count dictionary.
     """
     # 1. Convert to 8-bit single-channel grayscale
     if image.ndim == 3 and image.shape[2] in (3, 4):
@@ -151,12 +179,12 @@ def detect_surface_particles(
     bg = cv2.boxFilter(gray, -1, (ksize, ksize))
     diff = cv2.absdiff(gray, bg)
 
-    # 3. Dynamic contrast anomaly thresholding
+    # 3. Dynamic contrast anomaly thresholding (strict statistical outlier: 3.5 sigma)
     step = max(1, min(h, w) // 512)
     sub_diff = diff[::step, ::step].astype(np.float32)
     mean_diff = float(np.mean(sub_diff))
     std_diff = float(np.std(sub_diff))
-    thresh_val = max(contrast_diff_thresh, mean_diff + 2.8 * std_diff)
+    thresh_val = max(contrast_diff_thresh, mean_diff + 3.5 * std_diff)
 
     _, binary = cv2.threshold(diff, int(thresh_val), 255, cv2.THRESH_BINARY)
 
@@ -168,6 +196,9 @@ def detect_surface_particles(
     # 5. Extract candidate contours
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    # Pre-extract existing DL defect boxes for fast spatial comparison
+    crystal_boxes = [d.get("bbox_xyxy", [0, 0, 0, 0]) for d in existing_defects]
+
     candidate_particles: List[Dict[str, Any]] = []
     for cnt in contours:
         area = cv2.contourArea(cnt)
@@ -175,6 +206,10 @@ def detect_surface_particles(
             continue
 
         bx, by, bw, bh = cv2.boundingRect(cnt)
+        # Minimum physical dimensions (must not be tiny dot like TED core)
+        if bw < 12 or bh < 12:
+            continue
+
         ar = max(bw, bh) / max(1.0, min(bw, bh))
         if ar > max_aspect_ratio:
             # Exclude long linear dislocations (BPD)
@@ -187,9 +222,21 @@ def detect_surface_particles(
         if max_c < thresh_val:
             continue
 
+        cbox = [float(bx), float(by), float(bx + bw), float(by + bh)]
+
+        # STRICT EXCLUSION: If candidate overlaps with ANY existing DL crystal defect, discard completely!
+        is_crystal_defect_core = False
+        for ebox in crystal_boxes:
+            if is_box_overlapping_or_contained(cbox, ebox, iou_thresh=iou_exclusion_thresh):
+                is_crystal_defect_core = True
+                break
+
+        if is_crystal_defect_core:
+            continue
+
         candidate_particles.append(
             {
-                "bbox": [float(bx), float(by), float(bx + bw), float(by + bh)],
+                "bbox": cbox,
                 "area": area,
                 "center": [float(bx + bw / 2.0), float(by + bh / 2.0)],
                 "size": [float(bw), float(bh)],
@@ -197,36 +244,19 @@ def detect_surface_particles(
             }
         )
 
-    # 6. Hybrid reconciliation with existing deep learning detections
-    updated_defects: List[Dict[str, Any]] = []
+    # 6. Preserve 100% of existing DL detections (NEVER overwrite crystal defects)
+    updated_defects: List[Dict[str, Any]] = [dict(d) for d in existing_defects]
 
-    for d in existing_defects:
-        cname = d.get("class_name", "")
-        bbox = d.get("bbox_xyxy", [0, 0, 0, 0])
-        bw = bbox[2] - bbox[0]
-        bh = bbox[3] - bbox[1]
-        box_area = bw * bh
-
-        # Check if an existing defect is actually a large surface particle
-        if cname in ("TED", "TSD") and (max(bw, bh) >= 30 or box_area >= 700):
-            for cp in candidate_particles:
-                if compute_box_iou(bbox, cp["bbox"]) > 0.25:
-                    d["class_id"] = 3
-                    d["class_name"] = "Particle"
-                    break
-
-        updated_defects.append(d)
-
-    # 7. Add unmatched candidate particles as new Particle defects
-    existing_boxes = [d["bbox_xyxy"] for d in updated_defects]
-
+    # 7. Add only verified, non-overlapping surface particles
+    existing_particle_boxes: List[List[float]] = []
     for cp in candidate_particles:
-        is_covered = False
-        for ebox in existing_boxes:
-            if compute_box_iou(cp["bbox"], ebox) > 0.20:
-                is_covered = True
+        is_dup = False
+        for pb in existing_particle_boxes:
+            if compute_box_iou(cp["bbox"], pb) > 0.25:
+                is_dup = True
                 break
-        if not is_covered:
+        if not is_dup:
+            existing_particle_boxes.append(cp["bbox"])
             conf = round(float(np.clip(cp["contrast"] / 100.0 + 0.50, 0.75, 0.98)), 4)
             updated_defects.append(
                 {
