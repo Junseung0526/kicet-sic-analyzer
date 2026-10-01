@@ -26,6 +26,7 @@ from PyQt6.QtGui import (
     QFont,
     QIcon,
     QImage,
+    QKeyEvent,
     QPainter,
     QPen,
     QPixmap,
@@ -52,13 +53,16 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSlider,
+    QSpinBox,
     QSplitter,
+    QStatusBar,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -153,6 +157,29 @@ TRANSLATIONS = {
         "btn_del_bin": "➖ 구간 삭제",
         "btn_reset_bins": "🔄 기본 4방향 (A~D)",
         "btn_apply_bins": "⚡ 각도 룰 적용",
+        "bpd_spectrum_title": "BPD 길이 구간별 스펙트럼",
+        "bpd_short": "단파 (<30μm)",
+        "bpd_mid": "중파 (30~70μm)",
+        "bpd_long": "장파 (>70μm)",
+        "tsd_gauge_title": "TSD 각도 구간별 점유율",
+        "tooltip_open": "X-선 토포그래피(XRT) 웨이퍼 영상 열기 (단축키: O)",
+        "tooltip_model": "사용할 ONNX 가중치 모델 파일 선택",
+        "tooltip_run": "대형 웨이퍼 결함 전수 자동 검출 실행 (단축키: R)",
+        "tooltip_export": "검출 결과 및 도메인 정밀 계측 보고서 저장 (CSV / JSON)",
+        "tooltip_brightness": "16-bit 영상 밝기 미세 조정 (-100 ~ +100)",
+        "tooltip_contrast": "16-bit 영상 명암 대비 조절 (20% ~ 300%)",
+        "tooltip_fit": "전체 웨이퍼 영상을 화면에 맞춤 (단축키: F)",
+        "tooltip_100": "1:1 원본 100% 픽셀 크기로 줌 리셋",
+        "tooltip_grid": "웨이퍼 3x3 9분할 격자선 표시 토글 (단축키: G)",
+        "tooltip_scale": "실측 웨이퍼 해상도(μm/px) 설정 (BPD 길이 실시간 재계산)",
+        "tooltip_bpd_hist": "BPD 선 결함 길이 분포 히스토그램 창 열기",
+        "tooltip_add_bin": "새로운 사용자 정의 TSD 각도 판별 구간 추가",
+        "tooltip_del_bin": "선택한 각도 판별 구간 삭제",
+        "tooltip_reset_bins": "기본 4방향(A~D) 4분면 룰셋으로 복원",
+        "tooltip_apply_bins": "설정한 각도 룰셋을 즉시 적용하여 결함 재분류",
+        "sb_no_file": "📁 파일 없음",
+        "loading_scanning": "대형 웨이퍼 결함 전수 추론 중...",
+        "loading_image": "초고해상도 웨이퍼 영상 로딩 중...",
         "dialog_open_image": "SiC XRT 웨이퍼 이미지 선택",
         "dialog_select_model": "모델 가중치 선택",
         "dialog_save_report": "결함 보고서 저장",
@@ -224,6 +251,29 @@ TRANSLATIONS = {
         "btn_del_bin": "➖ Delete Bin",
         "btn_reset_bins": "🔄 Reset 4-Way (A~D)",
         "btn_apply_bins": "⚡ Apply Rules",
+        "bpd_spectrum_title": "BPD Length Spectrum Distribution",
+        "bpd_short": "Short (<30μm)",
+        "bpd_mid": "Medium (30-70μm)",
+        "bpd_long": "Long (>70μm)",
+        "tsd_gauge_title": "TSD Angle Rule Bin Occupancy",
+        "tooltip_open": "Open SiC XRT Wafer Image (Hotkey: O)",
+        "tooltip_model": "Select ONNX / PT Model Weights",
+        "tooltip_run": "Run Full-Wafer Defect Analysis (Hotkey: R)",
+        "tooltip_export": "Export Defect Reports to CSV / JSON",
+        "tooltip_brightness": "Adjust Display Brightness (-100 to +100)",
+        "tooltip_contrast": "Adjust Display Contrast (20% to 300%)",
+        "tooltip_fit": "Fit Entire Wafer to Viewport (Hotkey: F)",
+        "tooltip_100": "Reset Zoom to 100% (1:1 Pixel Scale)",
+        "tooltip_grid": "Toggle 3x3 Grid Overlay (Hotkey: G)",
+        "tooltip_scale": "Wafer Pixel Scale Resolution Calibration (μm/px)",
+        "tooltip_bpd_hist": "Open BPD Length Histogram Dialog",
+        "tooltip_add_bin": "Add New Custom TSD Angle Bin",
+        "tooltip_del_bin": "Delete Selected TSD Angle Bin",
+        "tooltip_reset_bins": "Reset to Standard 4-Way Angle Quadrants",
+        "tooltip_apply_bins": "Apply Custom Angle Rules and Reclassify Defects",
+        "sb_no_file": "📁 No File",
+        "loading_scanning": "Scanning full wafer defects...",
+        "loading_image": "Loading high-resolution wafer image...",
         "dialog_open_image": "Select SiC XRT Wafer Image",
         "dialog_select_model": "Select Model Weights",
         "dialog_save_report": "Save Defect Report",
@@ -359,11 +409,239 @@ class BPDHistogramDialog(QDialog):
 
 
 # ==============================================================================
+# Visual Feedback & Gauge Widgets
+# ==============================================================================
+
+class CanvasLoadingOverlay(QWidget):
+    """Semi-transparent animated spinner overlay shown during inference or large file loading."""
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setVisible(False)
+        self.angle: int = 0
+        self.message: str = "Analyzing wafer defects..."
+        self.progress_text: str = ""
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.rotate_spinner)
+
+    def rotate_spinner(self):
+        self.angle = (self.angle + 25) % 360
+        self.update()
+
+    def show_loading(self, message: str = "Processing...", progress_text: str = ""):
+        self.message = message
+        self.progress_text = progress_text
+        self.setVisible(True)
+        self.raise_()
+        self.timer.start(45)
+        self.update()
+
+    def set_progress(self, current: int, total: int, pct: int):
+        self.progress_text = f"{current:,} / {total:,} patches ({pct}%)"
+        self.update()
+
+    def hide_loading(self):
+        self.timer.stop()
+        self.setVisible(False)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        # 1. Semi-transparent backdrop
+        painter.fillRect(self.rect(), QColor(15, 17, 23, 190))
+
+        # 2. Centered status card
+        w, h = self.width(), self.height()
+        card_w, card_h = 340, 160
+        card_x = (w - card_w) // 2
+        card_y = (h - card_h) // 2
+
+        # Card body & glowing neon border
+        painter.setPen(QPen(QColor(0, 180, 255, 180), 1.5))
+        painter.setBrush(QBrush(QColor(25, 28, 36, 245)))
+        painter.drawRoundedRect(card_x, card_y, card_w, card_h, 10, 10)
+
+        # 3. Rotating spinner arc
+        cx = card_x + card_w // 2
+        cy = card_y + 46
+        radius = 22
+
+        arc_pen = QPen(QColor(0, 180, 255, 240), 4)
+        arc_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(arc_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        start_angle = int(-self.angle * 16)
+        span_angle = int(240 * 16)
+        painter.drawArc(cx - radius, cy - radius, radius * 2, radius * 2, start_angle, span_angle)
+
+        # 4. Main message text
+        painter.setPen(QColor(240, 243, 246))
+        font = QFont("Helvetica", 12)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(card_x + 10, card_y + 88, card_w - 20, 26, Qt.AlignmentFlag.AlignCenter, self.message)
+
+        # 5. Progress subtitle text
+        if self.progress_text:
+            painter.setPen(QColor(160, 170, 185))
+            sub_font = QFont("Helvetica", 10)
+            painter.setFont(sub_font)
+            painter.drawText(card_x + 10, card_y + 116, card_w - 20, 22, Qt.AlignmentFlag.AlignCenter, self.progress_text)
+
+
+class BPDSpectrumBar(QWidget):
+    """Visual spectrum bar showing BPD short/medium/long length distribution."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setFixedHeight(48)
+        self.cnt_short: int = 0
+        self.cnt_mid: int = 0
+        self.cnt_long: int = 0
+        self.total: int = 0
+        self.lang: str = "KO"
+
+    def set_data(self, lengths_um: List[float], lang: str = "KO"):
+        self.lang = lang
+        self.cnt_short = sum(1 for x in lengths_um if x < 30.0)
+        self.cnt_mid = sum(1 for x in lengths_um if 30.0 <= x <= 70.0)
+        self.cnt_long = sum(1 for x in lengths_um if x > 70.0)
+        self.total = len(lengths_um)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        w = self.width()
+        bar_y = 6
+        bar_h = 12
+
+        # Background track
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(36, 40, 48)))
+        painter.drawRoundedRect(0, bar_y, w, bar_h, 4, 4)
+
+        if self.total > 0:
+            w_short = int(round(w * (self.cnt_short / float(self.total))))
+            w_mid = int(round(w * (self.cnt_mid / float(self.total))))
+            w_long = w - w_short - w_mid
+
+            curr_x = 0
+            if w_short > 0:
+                painter.setBrush(QBrush(QColor("#00e676")))  # Emerald
+                painter.drawRoundedRect(curr_x, bar_y, w_short, bar_h, 3, 3)
+                curr_x += w_short
+
+            if w_mid > 0:
+                painter.setBrush(QBrush(QColor("#00b4ff")))  # Cyan
+                painter.drawRoundedRect(curr_x, bar_y, w_mid, bar_h, 3, 3)
+                curr_x += w_mid
+
+            if w_long > 0:
+                painter.setBrush(QBrush(QColor("#ff9800")))  # Amber
+                painter.drawRoundedRect(curr_x, bar_y, w_long, bar_h, 3, 3)
+
+        # Legend text below bar
+        painter.setPen(QColor(160, 168, 180))
+        font = QFont("Helvetica", 9)
+        painter.setFont(font)
+
+        if self.total > 0:
+            p_s = (self.cnt_short / self.total) * 100.0
+            p_m = (self.cnt_mid / self.total) * 100.0
+            p_l = (self.cnt_long / self.total) * 100.0
+            if self.lang == "KO":
+                txt = f"단파(<30μm): {self.cnt_short}개({p_s:.0f}%) | 중파(30~70μm): {self.cnt_mid}개({p_m:.0f}%) | 장파(>70μm): {self.cnt_long}개({p_l:.0f}%)"
+            else:
+                txt = f"Short(<30μm): {self.cnt_short} ({p_s:.0f}%) | Mid(30-70μm): {self.cnt_mid} ({p_m:.0f}%) | Long(>70μm): {self.cnt_long} ({p_l:.0f}%)"
+        else:
+            txt = "데이터 대기 중 (Waiting for BPD detection data...)" if self.lang == "KO" else "Waiting for BPD detection data..."
+
+        painter.drawText(0, bar_y + bar_h + 16, w, 18, Qt.AlignmentFlag.AlignLeft, txt)
+
+
+class TSDAngleGaugeBar(QWidget):
+    """Visual multi-segment bar showing TSD angle rule bin distribution."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setFixedHeight(48)
+        self.bin_data: List[Dict[str, Any]] = []
+        self.total: int = 0
+        self.lang: str = "KO"
+
+        self.color_palette = [
+            QColor("#ff283c"),  # Red/Pink (A)
+            QColor("#ff9800"),  # Orange (B)
+            QColor("#00b4ff"),  # Cyan (C)
+            QColor("#b388ff"),  # Purple (D)
+            QColor("#00e676"),  # Green (E)
+            QColor("#ffd600"),  # Yellow (F)
+        ]
+
+    def set_data(self, bins: List[Dict[str, Any]], counts: Dict[str, int], lang: str = "KO"):
+        self.lang = lang
+        self.bin_data = []
+        self.total = sum(counts.values())
+
+        for idx, b in enumerate(bins):
+            lbl = str(b.get("label", "?"))
+            cnt = counts.get(lbl, 0)
+            ratio = (cnt / float(self.total) * 100.0) if self.total > 0 else 0.0
+            color = self.color_palette[idx % len(self.color_palette)]
+            self.bin_data.append({"label": lbl, "count": cnt, "ratio": ratio, "color": color})
+
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        w = self.width()
+        bar_y = 6
+        bar_h = 12
+
+        # Background track
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(36, 40, 48)))
+        painter.drawRoundedRect(0, bar_y, w, bar_h, 4, 4)
+
+        if self.total > 0:
+            curr_x = 0
+            for item in self.bin_data:
+                seg_w = int(round(w * (item["count"] / float(self.total))))
+                if seg_w > 0:
+                    painter.setBrush(QBrush(item["color"]))
+                    painter.drawRoundedRect(curr_x, bar_y, seg_w, bar_h, 3, 3)
+                    curr_x += seg_w
+
+        # Legend text
+        painter.setPen(QColor(160, 168, 180))
+        font = QFont("Helvetica", 9)
+        painter.setFont(font)
+
+        if self.total > 0:
+            parts = [f"{item['label']}: {item['count']}개 ({item['ratio']:.0f}%)" for item in self.bin_data]
+            txt = " | ".join(parts)
+        else:
+            txt = "데이터 대기 중 (Waiting for TSD detection data...)" if self.lang == "KO" else "Waiting for TSD detection data..."
+
+        painter.drawText(0, bar_y + bar_h + 16, w, 18, Qt.AlignmentFlag.AlignLeft, txt)
+
+
+# ==============================================================================
 # Interactive High-Resolution Wafer Graphics View
 # ==============================================================================
 
 class WaferCanvasView(QGraphicsView):
-    """QGraphicsView with smooth cursor-centered wheel zoom and drag panning."""
+    """QGraphicsView with smooth cursor-centered wheel zoom, drag panning, and loading overlay."""
+
+    zoom_changed = pyqtSignal(float)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -397,6 +675,31 @@ class WaferCanvasView(QGraphicsView):
         self.min_zoom = 0.02
         self.max_zoom = 50.0
 
+        # Child Animated Loading Overlay
+        self.loading_overlay = CanvasLoadingOverlay(self)
+
+    def get_zoom_level(self) -> float:
+        """Returns current zoom scale factor (1.0 = 100%)."""
+        return float(self.transform().m11())
+
+    def show_loading(self, message: str = "Processing...", progress_text: str = ""):
+        """Displays centered animated loading overlay."""
+        self.loading_overlay.setGeometry(self.rect())
+        self.loading_overlay.show_loading(message, progress_text)
+
+    def set_loading_progress(self, current: int, total: int, pct: int):
+        """Updates progress status on the loading overlay."""
+        self.loading_overlay.set_progress(current, total, pct)
+
+    def hide_loading(self):
+        """Hides animated loading overlay."""
+        self.loading_overlay.hide_loading()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "loading_overlay"):
+            self.loading_overlay.setGeometry(self.rect())
+
     def wheelEvent(self, event: QWheelEvent):
         """Cursor-centered smooth zoom."""
         if self.pixmap_item is None:
@@ -414,6 +717,7 @@ class WaferCanvasView(QGraphicsView):
         new_scale = current_scale * factor
         if self.min_zoom <= new_scale <= self.max_zoom:
             self.scale(factor, factor)
+            self.zoom_changed.emit(self.get_zoom_level())
 
     def set_display_pixmap(
         self,
@@ -444,10 +748,12 @@ class WaferCanvasView(QGraphicsView):
             scene_rect = self.pixmap_item.sceneBoundingRect()
             self.scene.setSceneRect(scene_rect)
             self.fitInView(scene_rect, Qt.AspectRatioMode.KeepAspectRatio)
+            self.zoom_changed.emit(self.get_zoom_level())
 
     def reset_zoom_100(self):
         """Resets zoom to 100% pixel scale."""
         self.resetTransform()
+        self.zoom_changed.emit(self.get_zoom_level())
 
     def clear_overlays(self):
         """Removes all bounding box overlays."""
@@ -605,6 +911,7 @@ class WaferCanvasView(QGraphicsView):
         # Small padding so grid lines are visible
         padded_rect = target_rect.adjusted(-zw * 0.02, -zh * 0.02, zw * 0.02, zh * 0.02)
         self.fitInView(padded_rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self.zoom_changed.emit(self.get_zoom_level())
 
     def focus_on_defect(self, bbox_xyxy: List[float]):
         """Centers and zooms viewport onto a specific defect with comfortable padding."""
@@ -620,6 +927,7 @@ class WaferCanvasView(QGraphicsView):
         span = max(max(w, h) * 3.5, 120.0)
         target_rect = QRectF(cx - span / 2.0, cy - span / 2.0, span, span)
         self.fitInView(target_rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self.zoom_changed.emit(self.get_zoom_level())
 
 
 # ==============================================================================
@@ -857,6 +1165,131 @@ class SiCDefectMainWindow(QMainWindow):
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
 
+        # Bottom Modern Status Bar with Badges
+        self.init_status_bar()
+
+    def init_status_bar(self):
+        """Initializes polished modern dark status bar with persistent information badges."""
+        sb = self.statusBar()
+        sb.setSizeGripEnabled(False)
+        sb.setStyleSheet("""
+            QStatusBar {
+                background-color: #14161c;
+                border-top: 1px solid #282c35;
+                color: #8b949e;
+                font-size: 11px;
+                padding: 2px 6px;
+            }
+            QStatusBar::item {
+                border: none;
+            }
+        """)
+
+        badge_style = """
+            QLabel {
+                background-color: #1f232b;
+                color: #c9d1d9;
+                border: 1px solid #363c48;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 11px;
+                font-weight: 500;
+            }
+        """
+
+        self.status_file_lbl = QLabel(self.tr("sb_no_file"))
+        self.status_file_lbl.setStyleSheet(badge_style)
+        self.status_file_lbl.setToolTip("Currently loaded wafer image file")
+
+        self.status_res_lbl = QLabel("📐 0 x 0 px")
+        self.status_res_lbl.setStyleSheet(badge_style)
+        self.status_res_lbl.setToolTip("Image pixel dimensions (Width x Height)")
+
+        self.status_zoom_lbl = QLabel("🔍 100%")
+        self.status_zoom_lbl.setStyleSheet(badge_style)
+        self.status_zoom_lbl.setToolTip("Current canvas viewport zoom scale")
+
+        self.status_engine_lbl = QLabel(f"⚡ ONNX ({self.model_path.name})")
+        self.status_engine_lbl.setStyleSheet("""
+            QLabel {
+                background-color: #132b3d;
+                color: #58a6ff;
+                border: 1px solid #1f547e;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+        """)
+        self.status_engine_lbl.setToolTip("Inference runtime core engine (ONNX Runtime)")
+
+        sb.addPermanentWidget(self.status_file_lbl)
+        sb.addPermanentWidget(self.status_res_lbl)
+        sb.addPermanentWidget(self.status_zoom_lbl)
+        sb.addPermanentWidget(self.status_engine_lbl)
+
+        self.canvas.zoom_changed.connect(self.on_canvas_zoom_changed)
+        self.update_status_bar()
+
+    def on_canvas_zoom_changed(self, zoom_val: float):
+        """Callback when canvas zoom level changes."""
+        pct = int(round(zoom_val * 100))
+        self.status_zoom_lbl.setText(f"🔍 {pct}%")
+
+    def update_status_bar(self):
+        """Updates persistent status bar badge labels."""
+        if self.current_file_path:
+            name = self.current_file_path.name
+            if len(name) > 30:
+                name = name[:27] + "..."
+            self.status_file_lbl.setText(f"📁 {name}")
+        else:
+            self.status_file_lbl.setText(self.tr("sb_no_file"))
+
+        if self.current_slice_2d is not None:
+            h, w = self.current_slice_2d.shape[:2]
+            self.status_res_lbl.setText(f"📐 {w:,} x {h:,} px")
+        else:
+            self.status_res_lbl.setText("📐 0 x 0 px")
+
+        zoom_pct = int(round(self.canvas.get_zoom_level() * 100))
+        self.status_zoom_lbl.setText(f"🔍 {zoom_pct}%")
+
+        mname = self.model_path.name if self.model_path else "best.onnx"
+        self.status_engine_lbl.setText(f"⚡ ONNX ({mname})")
+
+    def keyPressEvent(self, event: QKeyEvent):
+        """Handles ergonomic global keyboard shortcuts for fast researcher workflow."""
+        focused = self.focusWidget()
+        if isinstance(focused, (QLineEdit, QSpinBox, QDoubleSpinBox)):
+            super().keyPressEvent(event)
+            return
+
+        key = event.key()
+        if key == Qt.Key.Key_O:
+            self.on_open_file_dialog()
+            event.accept()
+        elif key == Qt.Key.Key_R:
+            self.start_analysis()
+            event.accept()
+        elif key == Qt.Key.Key_F:
+            self.canvas.fit_in_view()
+            event.accept()
+        elif key == Qt.Key.Key_G:
+            self.chk_grid_overlay.toggle()
+            event.accept()
+        elif key == Qt.Key.Key_1:
+            self.tab_widget.setCurrentIndex(0)
+            event.accept()
+        elif key == Qt.Key.Key_2:
+            self.tab_widget.setCurrentIndex(1)
+            event.accept()
+        elif key == Qt.Key.Key_3:
+            self.tab_widget.setCurrentIndex(2)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
     def init_overview_tab(self):
         """Initializes Tab 1: Overview controls, inference trigger, summary table, and overlays."""
         tab_layout = QVBoxLayout(self.tab_overview)
@@ -1042,6 +1475,10 @@ class SiCDefectMainWindow(QMainWindow):
         self.lbl_bpd_summary.setStyleSheet("font-weight: bold; color: #00b4ff; padding: 4px 0;")
         bpd_layout.addWidget(self.lbl_bpd_summary)
 
+        # BPD Spectrum Bar (Short / Mid / Long)
+        self.bpd_spectrum_bar = BPDSpectrumBar()
+        bpd_layout.addWidget(self.bpd_spectrum_bar)
+
         # BPD defects table (ID, Center, Length px, Length um)
         self.table_bpd = QTableWidget(0, 4)
         self.table_bpd.setHorizontalHeaderLabels(self.tr("analysis_bpd_headers"))
@@ -1050,7 +1487,7 @@ class SiCDefectMainWindow(QMainWindow):
         self.table_bpd.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_bpd.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table_bpd.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table_bpd.setFixedHeight(140)
+        self.table_bpd.setFixedHeight(130)
         self.table_bpd.cellClicked.connect(self.on_bpd_cell_clicked)
         bpd_layout.addWidget(self.table_bpd)
 
@@ -1073,12 +1510,16 @@ class SiCDefectMainWindow(QMainWindow):
         self.lbl_tsd_desc.setStyleSheet("color: #a0a0a0; font-size: 11px;")
         tsd_layout.addWidget(self.lbl_tsd_desc)
 
+        # TSD Angle Rule Occupancy Gauge Bar
+        self.tsd_gauge_bar = TSDAngleGaugeBar()
+        tsd_layout.addWidget(self.tsd_gauge_bar)
+
         # TSD Custom Angle Bins Table
         self.table_tsd_bins = QTableWidget(len(self.current_angle_bins), 5)
         self.table_tsd_bins.setHorizontalHeaderLabels(self.tr("analysis_tsd_headers"))
         self.table_tsd_bins.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_tsd_bins.verticalHeader().setVisible(False)
-        self.table_tsd_bins.setFixedHeight(150)
+        self.table_tsd_bins.setFixedHeight(135)
         self.init_tsd_bins_table()
         tsd_layout.addWidget(self.table_tsd_bins)
 
@@ -1290,6 +1731,10 @@ class SiCDefectMainWindow(QMainWindow):
             self.tr("analysis_bpd_summary", cnt=bpd_cnt, mean=mean_um, max=max_um, min=min_um)
         )
 
+        # Update BPD Spectrum Bar
+        if hasattr(self, "bpd_spectrum_bar"):
+            self.bpd_spectrum_bar.set_data(lengths_um, lang=self.current_lang)
+
         # 2. Update TSD counts and ratios in table
         tsd_counts = {str(b["label"]): 0 for b in self.current_angle_bins}
         for d in self.tsd_defects:
@@ -1309,6 +1754,10 @@ class SiCDefectMainWindow(QMainWindow):
                     item_cnt.setText(str(cnt))
                 if item_ratio is not None:
                     item_ratio.setText(f"{ratio:.1f}%")
+
+        # Update TSD Gauge Bar
+        if hasattr(self, "tsd_gauge_bar"):
+            self.tsd_gauge_bar.set_data(self.current_angle_bins, tsd_counts, lang=self.current_lang)
 
     def init_grid_tab(self):
         """Initializes Tab 3: 3x3 Wafer Grid Density Map and Viewport Focus controls."""
@@ -1544,7 +1993,7 @@ class SiCDefectMainWindow(QMainWindow):
         self.grp_analysis.setTitle(self.tr("grp_analysis"))
         self.btn_run.setText(self.tr("btn_run"))
 
-        # Status text update if not currently running
+        # Status text update with modern status badges
         if self.worker is None or not self.worker.isRunning():
             if self.last_results is not None:
                 counts = self.last_results.get("counts", {})
@@ -1554,11 +2003,14 @@ class SiCDefectMainWindow(QMainWindow):
                 particle = counts.get("Particle", 0)
                 crystal = bpd + ted + tsd
                 total = crystal + particle
-                self.lbl_status.setText(self.tr("status_complete", total=total, crystal=crystal, particle=particle))
+                badge = '<span style="background-color: #163326; color: #00e676; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● COMPLETED</span> '
+                self.lbl_status.setText(badge + self.tr("status_complete", total=total, crystal=crystal, particle=particle))
             elif self.current_slice_2d is not None:
-                self.lbl_status.setText(self.tr("status_loaded"))
+                badge = '<span style="background-color: #1f3747; color: #58a6ff; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● LOADED</span> '
+                self.lbl_status.setText(badge + self.tr("status_loaded"))
             else:
-                self.lbl_status.setText(self.tr("status_ready"))
+                badge = '<span style="background-color: #272b34; color: #8b949e; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● READY</span> '
+                self.lbl_status.setText(badge + self.tr("status_ready"))
 
         self.grp_results.setTitle(self.tr("grp_results"))
         self.table_summary.setHorizontalHeaderLabels(self.tr("table_headers"))
@@ -1604,6 +2056,27 @@ class SiCDefectMainWindow(QMainWindow):
         self.table_grid_summary.setHorizontalHeaderLabels(self.tr("grid_headers"))
         if self.last_results is None:
             self.lbl_grid_hotspot.setText(self.tr("grid_no_data"))
+
+        # Comprehensive Tooltips
+        self.btn_open.setToolTip(self.tr("tooltip_open"))
+        self.btn_change_model.setToolTip(self.tr("tooltip_model"))
+        self.btn_run.setToolTip(self.tr("tooltip_run"))
+        self.btn_export.setToolTip(self.tr("tooltip_export"))
+        self.brightness_slider.setToolTip(self.tr("tooltip_brightness"))
+        self.contrast_slider.setToolTip(self.tr("tooltip_contrast"))
+        self.btn_fit.setToolTip(self.tr("tooltip_fit"))
+        self.btn_100.setToolTip(self.tr("tooltip_100"))
+        self.chk_bottom_grid.setToolTip(self.tr("tooltip_grid"))
+        self.chk_grid_overlay.setToolTip(self.tr("tooltip_grid"))
+        self.spin_pixel_scale.setToolTip(self.tr("tooltip_scale"))
+        self.btn_bpd_hist.setToolTip(self.tr("tooltip_bpd_hist"))
+        self.btn_add_bin.setToolTip(self.tr("tooltip_add_bin"))
+        self.btn_del_bin.setToolTip(self.tr("tooltip_del_bin"))
+        self.btn_reset_bins.setToolTip(self.tr("tooltip_reset_bins"))
+        self.btn_apply_bins.setToolTip(self.tr("tooltip_apply_bins"))
+
+        if hasattr(self, "status_file_lbl"):
+            self.update_status_bar()
 
     # --------------------------------------------------------------------------
     # File Loading and Image Rendering
@@ -1692,7 +2165,10 @@ class SiCDefectMainWindow(QMainWindow):
             self.canvas.update_grid_overlay(w, h)
             self.update_grid_stats(None)
 
-            self.lbl_status.setText(self.tr("status_loaded"))
+            badge = '<span style="background-color: #1f3747; color: #58a6ff; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● LOADED</span> '
+            self.lbl_status.setText(badge + self.tr("status_loaded"))
+            if hasattr(self, "status_file_lbl"):
+                self.update_status_bar()
         except Exception as e:
             QMessageBox.critical(self, self.tr("load_error_title"), self.tr("load_error_msg", e=e))
 
@@ -1794,8 +2270,10 @@ class SiCDefectMainWindow(QMainWindow):
             return
 
         self.btn_run.setEnabled(False)
-        self.lbl_status.setText(self.tr("status_scanning"))
+        badge = '<span style="background-color: #3b2c14; color: #ff9800; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● SCANNING</span> '
+        self.lbl_status.setText(badge + self.tr("status_scanning"))
         self.progress_bar.setValue(0)
+        self.canvas.show_loading(self.tr("loading_scanning"), "0% (0 / 1)")
 
         # Launch QThread worker
         self.worker = InferenceWorker(
@@ -1811,14 +2289,17 @@ class SiCDefectMainWindow(QMainWindow):
         self.worker.start()
 
     def on_inference_progress(self, current: int, total: int):
-        """Updates progress bar."""
+        """Updates progress bar and canvas overlay spinner."""
         if total > 0:
             pct = int((current / total) * 100)
             self.progress_bar.setValue(pct)
-            self.lbl_status.setText(self.tr("status_inferring", cur=current, tot=total, pct=pct))
+            badge = '<span style="background-color: #3b2c14; color: #ff9800; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● SCANNING</span> '
+            self.lbl_status.setText(badge + self.tr("status_inferring", cur=current, tot=total, pct=pct))
+            self.canvas.set_loading_progress(current, total, pct)
 
     def on_inference_finished(self, results: Dict[str, Any]):
         """Handles completion of inference, runs precision measurements, and updates UI."""
+        self.canvas.hide_loading()
         self.btn_run.setEnabled(True)
         self.progress_bar.setValue(100)
         self.last_results = results
@@ -1846,8 +2327,9 @@ class SiCDefectMainWindow(QMainWindow):
         crystal_subtotal = bpd_cnt + ted_cnt + tsd_cnt
         grand_total = crystal_subtotal + particle_cnt
 
+        badge = '<span style="background-color: #163326; color: #00e676; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● COMPLETED</span> '
         self.lbl_status.setText(
-            self.tr("status_complete", total=grand_total, crystal=crystal_subtotal, particle=particle_cnt)
+            badge + self.tr("status_complete", total=grand_total, crystal=crystal_subtotal, particle=particle_cnt)
         )
 
         # Update 6-Row Summary Table
@@ -1877,8 +2359,10 @@ class SiCDefectMainWindow(QMainWindow):
 
     def on_inference_error(self, err_msg: str):
         """Handles inference failure."""
+        self.canvas.hide_loading()
         self.btn_run.setEnabled(True)
-        self.lbl_status.setText(self.tr("status_failed"))
+        badge = '<span style="background-color: #3a181c; color: #ff5252; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● ERROR</span> '
+        self.lbl_status.setText(badge + self.tr("status_failed"))
         QMessageBox.critical(self, self.tr("infer_error_title"), self.tr("infer_error_msg", e=err_msg))
 
     # --------------------------------------------------------------------------
@@ -1960,72 +2444,140 @@ def launch_gui(image_path: Optional[Union[str, Path]] = None):
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # Modern cross-platform default look
 
-    # Set dark stylesheet
+    # Set modern dark polished stylesheet
     dark_stylesheet = """
         QMainWindow, QWidget {
-            background-color: #1e1e24;
+            background-color: #17191e;
             color: #dcdcdc;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             font-size: 13px;
         }
         QGroupBox {
-            border: 1px solid #3c3c46;
-            border-radius: 6px;
-            margin-top: 10px;
-            padding-top: 10px;
+            background-color: #1c1f26;
+            border: 1px solid #333842;
+            border-radius: 8px;
+            margin-top: 12px;
+            padding-top: 12px;
             font-weight: bold;
         }
         QGroupBox::title {
             subcontrol-origin: margin;
             subcontrol-position: top left;
-            padding: 0 5px;
+            padding: 0 6px;
             color: #58a6ff;
+            font-size: 12px;
         }
         QPushButton {
-            background-color: #2d3139;
-            border: 1px solid #454c59;
-            border-radius: 4px;
-            padding: 5px 12px;
-            color: #ffffff;
+            background-color: #272b34;
+            border: 1px solid #3e4452;
+            border-radius: 5px;
+            padding: 6px 12px;
+            color: #f0f2f5;
+            font-weight: 500;
         }
         QPushButton:hover {
-            background-color: #383e4a;
+            background-color: #343a47;
             border-color: #58a6ff;
+            color: #ffffff;
         }
         QPushButton:pressed {
-            background-color: #1f232b;
+            background-color: #1c1f26;
+        }
+        QPushButton:disabled {
+            background-color: #1e2128;
+            border-color: #2b2e36;
+            color: #5c6370;
         }
         QTableWidget {
-            background-color: #16181d;
-            border: 1px solid #3c3c46;
-            gridline-color: #2b2e38;
+            background-color: #14161b;
+            border: 1px solid #313640;
+            border-radius: 6px;
+            gridline-color: #262a33;
+            selection-background-color: #1f3d59;
+            selection-color: #ffffff;
+        }
+        QTableWidget::item {
+            padding: 4px 6px;
+            border-radius: 3px;
+        }
+        QTableWidget::item:hover {
+            background-color: #242933;
+        }
+        QTableWidget::item:selected {
+            background-color: #1a4266;
+            color: #ffffff;
         }
         QHeaderView::section {
-            background-color: #252830;
+            background-color: #1f232b;
             color: #8b949e;
-            padding: 4px;
-            border: 1px solid #3c3c46;
+            padding: 5px 8px;
+            border: none;
+            border-bottom: 1px solid #313640;
+            border-right: 1px solid #282c35;
+            font-weight: bold;
+            font-size: 11px;
         }
         QProgressBar {
-            border: 1px solid #3c3c46;
+            border: 1px solid #313640;
             border-radius: 4px;
             text-align: center;
-            background-color: #16181d;
+            background-color: #14161b;
+            color: #e6edf3;
+            font-size: 11px;
+            font-weight: bold;
         }
         QProgressBar::chunk {
             background-color: #007acc;
             border-radius: 3px;
         }
         QSlider::groove:horizontal {
-            height: 4px;
-            background: #3c3c46;
+            height: 5px;
+            background: #2a2e38;
             border-radius: 2px;
         }
         QSlider::handle:horizontal {
-            background: #58a6ff;
+            background: #007acc;
+            border: 1.5px solid #58a6ff;
             width: 14px;
             margin: -5px 0;
             border-radius: 7px;
+        }
+        QSlider::handle:horizontal:hover {
+            background: #58a6ff;
+        }
+        QToolTip {
+            background-color: #252830;
+            color: #f0f2f5;
+            border: 1px solid #58a6ff;
+            border-radius: 5px;
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+        QDoubleSpinBox, QSpinBox, QLineEdit {
+            background-color: #14161b;
+            border: 1px solid #3c424e;
+            border-radius: 4px;
+            padding: 4px 6px;
+            color: #e6edf3;
+        }
+        QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus {
+            border-color: #58a6ff;
+        }
+        QScrollBar:vertical {
+            background: #17191e;
+            width: 10px;
+            margin: 0px;
+        }
+        QScrollBar::handle:vertical {
+            background: #333842;
+            min-height: 20px;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background: #444b57;
+        }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            height: 0px;
         }
     """
     app.setStyleSheet(dark_stylesheet)
