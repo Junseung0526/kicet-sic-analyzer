@@ -38,11 +38,13 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGraphicsItem,
+    QGraphicsLineItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsSimpleTextItem,
     QGraphicsView,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -55,6 +57,7 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -84,6 +87,9 @@ TRANSLATIONS = {
         "contrast": "대비:",
         "fit_view": "화면 맞춤",
         "zoom_100": "100% (1:1)",
+        "tab_overview": "📊 개요 (Overview)",
+        "tab_analysis": "📐 정밀 계측 (Analysis)",
+        "tab_grid": "🧭 3x3 구역 (Wafer Grid)",
         "grp_file": "파일 및 모델 설정",
         "btn_open": "📂 XRT 이미지 열기 (.tif / .tiff)",
         "no_image": "불러온 이미지 없음",
@@ -111,6 +117,23 @@ TRANSLATIONS = {
         "chk_tsd": "TSD",
         "chk_particle": "Particle (이물질)",
         "btn_export": "💾 보고서 내보내기 (CSV / JSON)",
+        "chk_grid_overlay": "3x3 구역 격자선 표시",
+        "grid_title": "웨이퍼 3x3 구역 분할 및 결함 밀도",
+        "grid_intro": "구역 블록을 클릭하면 해당 1/9 영역으로 화면이 포커스됩니다.",
+        "grid_hotspot": "🔥 최고 밀집 구역: {zone} (결함 {count}개, {pct}%)",
+        "grid_no_data": "분석 실행 후 9개 구역별 결함 수와 밀도가 집계됩니다.",
+        "grid_headers": ["구역 (Zone)", "방위", "결함 수", "점유율"],
+        "analysis_bpd_title": "BPD 전위 길이 분포 분석 (Dislocation Length)",
+        "analysis_bpd_desc": "BPD 결함의 선형 전파 길이(px) 필터링 및 통계 분석 (연구원 설정)",
+        "analysis_bpd_min": "최소 길이 필터: {val} px",
+        "analysis_bpd_max": "최대 길이 필터: {val} px",
+        "analysis_bpd_stats": "평균 길이: N/A | 최대 길이: N/A | 표준편차: N/A",
+        "analysis_bpd_btn": "📈 BPD 길이 분포 히스토그램 생성",
+        "analysis_tsd_title": "TSD 전파 각도 및 코어 프로파일링 (Propagation Angle)",
+        "analysis_tsd_desc": "웨이퍼 축 기준 전파 각도 및 코어 반경 마진 설정 (연구원 설정)",
+        "analysis_tsd_angle": "기준 각도 축: {val}°",
+        "analysis_tsd_margin": "코어 반경 마진: {val} px",
+        "analysis_tsd_btn": "🧭 각도 벡터 맵 생성",
         "dialog_open_image": "SiC XRT 웨이퍼 이미지 선택",
         "dialog_select_model": "모델 가중치 선택",
         "dialog_save_report": "결함 보고서 저장",
@@ -133,6 +156,9 @@ TRANSLATIONS = {
         "contrast": "Contrast:",
         "fit_view": "Fit to View",
         "zoom_100": "100% (1:1)",
+        "tab_overview": "📊 Overview",
+        "tab_analysis": "📐 Analysis",
+        "tab_grid": "🧭 Wafer Grid",
         "grp_file": "File & Model Configuration",
         "btn_open": "📂 Open XRT Image (.tif / .tiff)",
         "no_image": "No image loaded",
@@ -160,6 +186,23 @@ TRANSLATIONS = {
         "chk_tsd": "TSD",
         "chk_particle": "Particle",
         "btn_export": "💾 Export Report (CSV / JSON)",
+        "chk_grid_overlay": "Show 3x3 Grid Overlay",
+        "grid_title": "3x3 Regional Defect Distribution & Focus",
+        "grid_intro": "Click any zone block to focus canvas onto that 1/9 area.",
+        "grid_hotspot": "🔥 Peak Defect Density Hotspot: {zone} ({count} defects, {pct}%)",
+        "grid_no_data": "Run defect analysis to compute regional density map.",
+        "grid_headers": ["Zone", "Region", "Count", "Ratio"],
+        "analysis_bpd_title": "BPD Dislocation Length Distribution",
+        "analysis_bpd_desc": "BPD linear propagation length (px) threshold filtering & stats",
+        "analysis_bpd_min": "Min Length Filter: {val} px",
+        "analysis_bpd_max": "Max Length Filter: {val} px",
+        "analysis_bpd_stats": "Mean Length: N/A | Max Length: N/A | Std Dev: N/A",
+        "analysis_bpd_btn": "📈 Generate BPD Length Histogram",
+        "analysis_tsd_title": "TSD Propagation Angle & Core Profiling",
+        "analysis_tsd_desc": "Wafer axis propagation angle vector & core radius margin",
+        "analysis_tsd_angle": "Reference Angle Axis: {val}°",
+        "analysis_tsd_margin": "Core Radius Margin: {val} px",
+        "analysis_tsd_btn": "🧭 Generate Angle Vector Map",
         "dialog_open_image": "Select SiC XRT Wafer Image",
         "dialog_select_model": "Select Model Weights",
         "dialog_save_report": "Save Defect Report",
@@ -252,6 +295,12 @@ class WaferCanvasView(QGraphicsView):
             "TSD": [],
             "Particle": [],
         }
+
+        # 3x3 Grid Overlay Elements
+        self.grid_items: List[QGraphicsItem] = []
+        self.show_grid: bool = False
+        self.current_img_w: float = 0.0
+        self.current_img_h: float = 0.0
 
         # Configuration for smooth navigation
         self.setRenderHint(QPainter.RenderHint.Antialiasing, False)  # Fast for large images
@@ -364,6 +413,101 @@ class WaferCanvasView(QGraphicsView):
             for item in self.overlay_items[class_name]:
                 item.setVisible(visible)
 
+    def clear_grid_overlay(self):
+        """Clears 3x3 grid lines and text labels from the scene."""
+        for item in self.grid_items:
+            self.scene.removeItem(item)
+        self.grid_items.clear()
+
+    def update_grid_overlay(self, width: float, height: float):
+        """Builds or reconstructs the 3x3 grid lines and zone markers."""
+        self.clear_grid_overlay()
+        self.current_img_w = float(width)
+        self.current_img_h = float(height)
+
+        if width <= 0 or height <= 0:
+            return
+
+        zw = width / 3.0
+        zh = height / 3.0
+
+        grid_pen = QPen(QColor(0, 220, 255, 170), 2.0, Qt.PenStyle.DashLine)
+        grid_pen.setCosmetic(True)
+
+        # 1. Vertical dividing lines (2 lines)
+        for i in [1, 2]:
+            x = i * zw
+            line = QGraphicsLineItem(x, 0.0, x, height)
+            line.setPen(grid_pen)
+            line.setZValue(20)
+            line.setVisible(self.show_grid)
+            self.scene.addItem(line)
+            self.grid_items.append(line)
+
+        # 2. Horizontal dividing lines (2 lines)
+        for j in [1, 2]:
+            y = j * zh
+            line = QGraphicsLineItem(0.0, y, width, y)
+            line.setPen(grid_pen)
+            line.setZValue(20)
+            line.setVisible(self.show_grid)
+            self.scene.addItem(line)
+            self.grid_items.append(line)
+
+        # 3. Outer boundary rectangle
+        border_pen = QPen(QColor(0, 220, 255, 120), 1.5, Qt.PenStyle.SolidLine)
+        border_pen.setCosmetic(True)
+        border = QGraphicsRectItem(0.0, 0.0, width, height)
+        border.setPen(border_pen)
+        border.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        border.setZValue(19)
+        border.setVisible(self.show_grid)
+        self.scene.addItem(border)
+        self.grid_items.append(border)
+
+        # 4. Zone tag labels in corners of each 1/9 block
+        zone_names = [
+            ["Zone 1 (NW)", "Zone 2 (N)", "Zone 3 (NE)"],
+            ["Zone 4 (W)", "Zone 5 (Center)", "Zone 6 (E)"],
+            ["Zone 7 (SW)", "Zone 8 (S)", "Zone 9 (SE)"],
+        ]
+        font = QFont("Helvetica", 14)
+        font.setBold(True)
+
+        for r in range(3):
+            for c in range(3):
+                tag = zone_names[r][c]
+                text_item = QGraphicsSimpleTextItem(f"  {tag}  ")
+                text_item.setFont(font)
+                text_item.setBrush(QBrush(QColor(0, 240, 255, 230)))
+                # Place near top-left of each zone with small margin
+                tx = c * zw + 24.0
+                ty = r * zh + 24.0
+                text_item.setPos(tx, ty)
+                text_item.setZValue(21)
+                text_item.setVisible(self.show_grid)
+                self.scene.addItem(text_item)
+                self.grid_items.append(text_item)
+
+    def set_grid_visibility(self, visible: bool):
+        """Toggles visibility of the 3x3 grid overlay."""
+        self.show_grid = visible
+        for item in self.grid_items:
+            item.setVisible(visible)
+
+    def focus_on_zone(self, row: int, col: int):
+        """Zooms and centers viewport onto specific 1/9 zone (0-2 row, 0-2 col)."""
+        if self.current_img_w <= 0 or self.current_img_h <= 0:
+            return
+        zw = self.current_img_w / 3.0
+        zh = self.current_img_h / 3.0
+        zx = col * zw
+        zy = row * zh
+        target_rect = QRectF(zx, zy, zw, zh)
+        # Small padding so grid lines are visible
+        padded_rect = target_rect.adjusted(-zw * 0.02, -zh * 0.02, zw * 0.02, zh * 0.02)
+        self.fitInView(padded_rect, Qt.AspectRatioMode.KeepAspectRatio)
+
 
 # ==============================================================================
 # Main Desktop Window
@@ -441,6 +585,13 @@ class SiCDefectMainWindow(QMainWindow):
                 return c.resolve()
         return (Path("runs") / "train" / "sic_defect_train" / "weights" / "best.onnx").resolve()
 
+    def create_vsep(self) -> QFrame:
+        """Creates vertical separator line."""
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        return sep
+
     def init_ui(self):
         """Initializes UI layout, controls, and stylesheets."""
         main_widget = QWidget()
@@ -514,18 +665,24 @@ class SiCDefectMainWindow(QMainWindow):
         self.btn_100.clicked.connect(self.canvas.reset_zoom_100)
         bottom_layout.addWidget(self.btn_100)
 
+        # 5. Quick 3x3 Grid Checkbox on bottom bar
+        self.chk_bottom_grid = QCheckBox("3x3 Grid")
+        self.chk_bottom_grid.setChecked(False)
+        self.chk_bottom_grid.stateChanged.connect(self.on_grid_overlay_toggled)
+        bottom_layout.addWidget(self.chk_bottom_grid)
+
         left_layout.addWidget(bottom_frame)
         splitter.addWidget(left_container)
 
         # ----------------------------------------------------------------------
-        # RIGHT: Control Panel & Defect Statistics
+        # RIGHT: QTabWidget 3-Tab Panel (Overview, Analysis, Wafer Grid)
         # ----------------------------------------------------------------------
         right_panel = QWidget()
-        right_panel.setMinimumWidth(360)
-        right_panel.setMaximumWidth(440)
+        right_panel.setMinimumWidth(380)
+        right_panel.setMaximumWidth(460)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(10)
+        right_layout.setSpacing(6)
 
         # Top Bar: Language Toggle Button
         top_bar_layout = QHBoxLayout()
@@ -536,6 +693,56 @@ class SiCDefectMainWindow(QMainWindow):
         self.btn_lang.clicked.connect(self.toggle_language)
         top_bar_layout.addWidget(self.btn_lang)
         right_layout.addLayout(top_bar_layout)
+
+        # QTabWidget
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #3c3c46;
+                background-color: #1e1e24;
+                border-radius: 4px;
+            }
+            QTabBar::tab {
+                background: #252830;
+                color: #8b949e;
+                padding: 7px 12px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                margin-right: 2px;
+                font-weight: bold;
+            }
+            QTabBar::tab:selected {
+                background: #007acc;
+                color: #ffffff;
+            }
+        """)
+
+        # Tab 1: Overview
+        self.tab_overview = QWidget()
+        self.init_overview_tab()
+        self.tab_widget.addTab(self.tab_overview, "📊 Overview")
+
+        # Tab 2: Precision Analysis
+        self.tab_analysis = QWidget()
+        self.init_analysis_tab()
+        self.tab_widget.addTab(self.tab_analysis, "📐 Analysis")
+
+        # Tab 3: Wafer 3x3 Grid
+        self.tab_grid = QWidget()
+        self.init_grid_tab()
+        self.tab_widget.addTab(self.tab_grid, "🧭 Wafer Grid")
+
+        right_layout.addWidget(self.tab_widget)
+        splitter.addWidget(right_panel)
+
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 1)
+
+    def init_overview_tab(self):
+        """Initializes Tab 1: Overview controls, inference trigger, summary table, and overlays."""
+        tab_layout = QVBoxLayout(self.tab_overview)
+        tab_layout.setContentsMargins(6, 8, 6, 8)
+        tab_layout.setSpacing(8)
 
         # Group 1: File & Model Management
         self.grp_file = QGroupBox("File & Model Configuration")
@@ -560,7 +767,7 @@ class SiCDefectMainWindow(QMainWindow):
         model_hbox.addWidget(self.btn_change_model)
         grp_file_layout.addLayout(model_hbox)
 
-        right_layout.addWidget(self.grp_file)
+        tab_layout.addWidget(self.grp_file)
 
         # Group 2: Analysis Execution
         self.grp_analysis = QGroupBox("Automated Defect Analysis")
@@ -580,20 +787,20 @@ class SiCDefectMainWindow(QMainWindow):
         self.lbl_status = QLabel("Ready")
         grp_analysis_layout.addWidget(self.lbl_status)
 
-        right_layout.addWidget(self.grp_analysis)
+        tab_layout.addWidget(self.grp_analysis)
 
         # Group 3: Detection Summary & Overlays
         self.grp_results = QGroupBox("Defect Summary & Class Overlays")
         grp_results_layout = QVBoxLayout(self.grp_results)
 
-        # Summary Table: 6 Rows (BPD, TED, TSD, Crystal Subtotal, Particle, Grand Total)
+        # Summary Table: 6 Rows
         self.table_summary = QTableWidget(6, 3)
         self.table_summary.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_summary.verticalHeader().setVisible(False)
         self.init_summary_table()
         grp_results_layout.addWidget(self.table_summary)
 
-        # Layer Checkboxes (4 Classes: BPD, TED, TSD, Particle)
+        # Layer Checkboxes
         overlay_hbox = QHBoxLayout()
         self.chk_bpd = QCheckBox("BPD")
         self.chk_bpd.setChecked(True)
@@ -623,20 +830,8 @@ class SiCDefectMainWindow(QMainWindow):
         self.btn_export.clicked.connect(self.export_report)
         grp_results_layout.addWidget(self.btn_export)
 
-        right_layout.addWidget(self.grp_results)
-
-        right_layout.addStretch(1)
-        splitter.addWidget(right_panel)
-
-        splitter.setStretchFactor(0, 4)
-        splitter.setStretchFactor(1, 1)
-
-    def create_vsep(self) -> QFrame:
-        """Creates vertical separator line."""
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        return sep
+        tab_layout.addWidget(self.grp_results)
+        tab_layout.addStretch(1)
 
     def init_summary_table(self):
         """Initializes empty defect statistics table with 6 rows."""
@@ -670,10 +865,278 @@ class SiCDefectMainWindow(QMainWindow):
             self.table_summary.setItem(row_idx, 1, item_cnt)
             self.table_summary.setItem(row_idx, 2, item_col)
 
+    def init_analysis_tab(self):
+        """Initializes Tab 2: Precision Analysis placeholder for BPD length & TSD propagation angle."""
+        tab_layout = QVBoxLayout(self.tab_analysis)
+        tab_layout.setContentsMargins(6, 8, 6, 8)
+        tab_layout.setSpacing(10)
+
+        # Group 1: BPD Dislocation Length Distribution
+        self.grp_bpd_analysis = QGroupBox("BPD Dislocation Length Distribution")
+        bpd_layout = QVBoxLayout(self.grp_bpd_analysis)
+
+        self.lbl_bpd_desc = QLabel("BPD linear propagation length (px) threshold filtering & stats")
+        self.lbl_bpd_desc.setWordWrap(True)
+        bpd_layout.addWidget(self.lbl_bpd_desc)
+
+        # Sliders for min/max length filtering
+        self.lbl_bpd_min = QLabel("Min Length Filter: 10 px")
+        self.slider_bpd_min = QSlider(Qt.Orientation.Horizontal)
+        self.slider_bpd_min.setRange(0, 100)
+        self.slider_bpd_min.setValue(10)
+        self.slider_bpd_min.valueChanged.connect(lambda v: self.lbl_bpd_min.setText(self.tr("analysis_bpd_min", val=v)))
+        bpd_layout.addWidget(self.lbl_bpd_min)
+        bpd_layout.addWidget(self.slider_bpd_min)
+
+        self.lbl_bpd_max = QLabel("Max Length Filter: 150 px")
+        self.slider_bpd_max = QSlider(Qt.Orientation.Horizontal)
+        self.slider_bpd_max.setRange(50, 400)
+        self.slider_bpd_max.setValue(150)
+        self.slider_bpd_max.valueChanged.connect(lambda v: self.lbl_bpd_max.setText(self.tr("analysis_bpd_max", val=v)))
+        bpd_layout.addWidget(self.lbl_bpd_max)
+        bpd_layout.addWidget(self.slider_bpd_max)
+
+        self.lbl_bpd_stats = QLabel("Mean Length: N/A | Max Length: N/A | Std Dev: N/A")
+        self.lbl_bpd_stats.setStyleSheet("font-weight: bold; color: #58a6ff; padding: 4px 0;")
+        bpd_layout.addWidget(self.lbl_bpd_stats)
+
+        self.btn_bpd_hist = QPushButton("📈 Generate BPD Length Histogram")
+        self.btn_bpd_hist.clicked.connect(lambda: QMessageBox.information(
+            self, "BPD Analysis", "BPD dislocation length profiling module initialized.\n(Feature scheduled for integration with 3D tracking)."
+        ))
+        bpd_layout.addWidget(self.btn_bpd_hist)
+
+        tab_layout.addWidget(self.grp_bpd_analysis)
+
+        # Group 2: TSD Propagation Angle & Core Profiling
+        self.grp_tsd_analysis = QGroupBox("TSD Propagation Angle & Core Profiling")
+        tsd_layout = QVBoxLayout(self.grp_tsd_analysis)
+
+        self.lbl_tsd_desc = QLabel("Wafer axis propagation angle vector & core radius margin")
+        self.lbl_tsd_desc.setWordWrap(True)
+        tsd_layout.addWidget(self.lbl_tsd_desc)
+
+        self.lbl_tsd_angle = QLabel("Reference Angle Axis: 45°")
+        self.slider_tsd_angle = QSlider(Qt.Orientation.Horizontal)
+        self.slider_tsd_angle.setRange(0, 360)
+        self.slider_tsd_angle.setValue(45)
+        self.slider_tsd_angle.valueChanged.connect(lambda v: self.lbl_tsd_angle.setText(self.tr("analysis_tsd_angle", val=v)))
+        tsd_layout.addWidget(self.lbl_tsd_angle)
+        tsd_layout.addWidget(self.slider_tsd_angle)
+
+        self.lbl_tsd_margin = QLabel("Core Radius Margin: 12 px")
+        self.slider_tsd_margin = QSlider(Qt.Orientation.Horizontal)
+        self.slider_tsd_margin.setRange(2, 40)
+        self.slider_tsd_margin.setValue(12)
+        self.slider_tsd_margin.valueChanged.connect(lambda v: self.lbl_tsd_margin.setText(self.tr("analysis_tsd_margin", val=v)))
+        tsd_layout.addWidget(self.lbl_tsd_margin)
+        tsd_layout.addWidget(self.slider_tsd_margin)
+
+        self.btn_tsd_vector = QPushButton("🧭 Generate Angle Vector Map")
+        self.btn_tsd_vector.clicked.connect(lambda: QMessageBox.information(
+            self, "TSD Analysis", "TSD core angular vector calculation module initialized.\n(Feature scheduled for integration with 3D tracking)."
+        ))
+        tsd_layout.addWidget(self.btn_tsd_vector)
+
+        tab_layout.addWidget(self.grp_tsd_analysis)
+        tab_layout.addStretch(1)
+
+    def init_grid_tab(self):
+        """Initializes Tab 3: 3x3 Wafer Grid Density Map and Viewport Focus controls."""
+        tab_layout = QVBoxLayout(self.tab_grid)
+        tab_layout.setContentsMargins(6, 8, 6, 8)
+        tab_layout.setSpacing(8)
+
+        # Overlay Toggle Checkbox
+        self.chk_grid_overlay = QCheckBox("Show 3x3 Grid Overlay")
+        self.chk_grid_overlay.setStyleSheet("font-weight: bold; color: #00d2ff;")
+        self.chk_grid_overlay.setChecked(False)
+        self.chk_grid_overlay.stateChanged.connect(self.on_grid_overlay_toggled)
+        tab_layout.addWidget(self.chk_grid_overlay)
+
+        self.lbl_grid_intro = QLabel("Click any zone block to focus canvas onto that 1/9 area.")
+        self.lbl_grid_intro.setWordWrap(True)
+        tab_layout.addWidget(self.lbl_grid_intro)
+
+        # 3x3 Interactive Buttons Grid
+        grid_container = QGroupBox("Interactive 3x3 Wafer Zones")
+        grid_layout = QGridLayout(grid_container)
+        grid_layout.setContentsMargins(6, 8, 6, 8)
+        grid_layout.setSpacing(6)
+
+        zone_regions = [
+            ["NW", "N", "NE"],
+            ["W", "Center", "E"],
+            ["SW", "S", "SE"],
+        ]
+
+        self.zone_buttons: List[List[QPushButton]] = [[None for _ in range(3)] for _ in range(3)]
+        zone_id = 1
+        for r in range(3):
+            for c in range(3):
+                reg = zone_regions[r][c]
+                btn = QPushButton(f"Zone {zone_id}\n({reg})\n0 defects")
+                btn.setFixedHeight(54)
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #252830;
+                        border: 1px solid #454c59;
+                        border-radius: 4px;
+                        font-size: 11px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        border-color: #00d2ff;
+                        background-color: #2d3440;
+                    }
+                """)
+                # Capture current r, c in lambda
+                btn.clicked.connect(lambda _, row=r, col=c: self.canvas.focus_on_zone(row, col))
+                grid_layout.addWidget(btn, r, c)
+                self.zone_buttons[r][c] = btn
+                zone_id += 1
+
+        tab_layout.addWidget(grid_container)
+
+        # Hotspot Summary Label
+        self.lbl_grid_hotspot = QLabel("Run defect analysis to compute regional density map.")
+        self.lbl_grid_hotspot.setWordWrap(True)
+        self.lbl_grid_hotspot.setStyleSheet("font-weight: bold; color: #ff9800; padding: 4px 0;")
+        tab_layout.addWidget(self.lbl_grid_hotspot)
+
+        # 3x3 Summary Table (Zone, Region, Count, Ratio)
+        self.table_grid_summary = QTableWidget(9, 4)
+        self.table_grid_summary.setHorizontalHeaderLabels(["Zone", "Region", "Count", "Ratio"])
+        self.table_grid_summary.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table_grid_summary.verticalHeader().setVisible(False)
+        self.init_grid_table()
+        tab_layout.addWidget(self.table_grid_summary)
+
+        tab_layout.addStretch(1)
+
+    def on_grid_overlay_toggled(self, state: int):
+        """Synchronizes 3x3 grid visibility across canvas and both checkboxes."""
+        is_visible = (state == 2 or state == Qt.CheckState.Checked.value)
+        self.canvas.set_grid_visibility(is_visible)
+        if self.chk_grid_overlay.isChecked() != is_visible:
+            self.chk_grid_overlay.setChecked(is_visible)
+        if self.chk_bottom_grid.isChecked() != is_visible:
+            self.chk_bottom_grid.setChecked(is_visible)
+
+    def init_grid_table(self):
+        """Initializes empty 9-row grid density table."""
+        zone_regions = [
+            ("Zone 1", "NW"), ("Zone 2", "N"), ("Zone 3", "NE"),
+            ("Zone 4", "W"),  ("Zone 5", "Center"), ("Zone 6", "E"),
+            ("Zone 7", "SW"), ("Zone 8", "S"), ("Zone 9", "SE"),
+        ]
+        for row_idx, (zname, reg) in enumerate(zone_regions):
+            item_z = QTableWidgetItem(zname)
+            item_r = QTableWidgetItem(reg)
+            item_c = QTableWidgetItem("0")
+            item_p = QTableWidgetItem("0.0%")
+            item_c.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_p.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table_grid_summary.setItem(row_idx, 0, item_z)
+            self.table_grid_summary.setItem(row_idx, 1, item_r)
+            self.table_grid_summary.setItem(row_idx, 2, item_c)
+            self.table_grid_summary.setItem(row_idx, 3, item_p)
+
+    def update_grid_stats(self, defects: Optional[List[Dict[str, Any]]] = None):
+        """Calculates 3x3 regional defect density and updates buttons and table."""
+        zone_regions = [
+            ["NW", "N", "NE"],
+            ["W", "Center", "E"],
+            ["SW", "S", "SE"],
+        ]
+        if self.current_slice_2d is None or not defects:
+            zone_id = 1
+            for r in range(3):
+                for c in range(3):
+                    reg = zone_regions[r][c]
+                    btn = self.zone_buttons[r][c]
+                    if btn is not None:
+                        btn.setText(f"Zone {zone_id}\n({reg})\n0 defects\n(0.0%)")
+                        btn.setStyleSheet("background-color: #252830; border: 1px solid #454c59; border-radius: 4px; font-size: 11px; font-weight: bold;")
+                    zone_id += 1
+            self.init_grid_table()
+            self.lbl_grid_hotspot.setText(self.tr("grid_no_data"))
+            return
+
+        h, w = self.current_slice_2d.shape[:2]
+        zw = w / 3.0
+        zh = h / 3.0
+        zone_counts = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+
+        for d in defects:
+            cx, cy = d["center_xy"]
+            zr = min(2, max(0, int(cy // zh)))
+            zc = min(2, max(0, int(cx // zw)))
+            zone_counts[zr][zc] += 1
+
+        total = max(1, len(defects))
+        max_cnt = max(max(row) for row in zone_counts)
+        hotspot_zone = ""
+        hotspot_cnt = -1
+
+        zone_id = 1
+        table_row = 0
+        for r in range(3):
+            for c in range(3):
+                cnt = zone_counts[r][c]
+                pct = (cnt / float(total)) * 100.0
+                reg = zone_regions[r][c]
+                ztitle = f"Zone {zone_id}"
+
+                if cnt > hotspot_cnt:
+                    hotspot_cnt = cnt
+                    hotspot_zone = f"{ztitle} ({reg})"
+
+                # Heatmap background color for button
+                if max_cnt > 0 and cnt > 0:
+                    intensity = int((cnt / float(max_cnt)) * 120)
+                    bg_color = f"rgb({intensity + 35}, 40, {max(20, 60 - intensity // 2)})"
+                    border_color = "#ff5722" if cnt == max_cnt else "#00d2ff"
+                else:
+                    bg_color = "#252830"
+                    border_color = "#454c59"
+
+                btn = self.zone_buttons[r][c]
+                if btn is not None:
+                    btn.setText(f"{ztitle}\n({reg})\n{cnt} defects\n({pct:.1f}%)")
+                    btn.setStyleSheet(f"""
+                        QPushButton {{
+                            background-color: {bg_color};
+                            border: 1.5px solid {border_color};
+                            border-radius: 4px;
+                            font-size: 11px;
+                            font-weight: bold;
+                            color: #ffffff;
+                        }}
+                    """)
+
+                # Table update
+                if self.table_grid_summary.item(table_row, 2) is not None:
+                    self.table_grid_summary.item(table_row, 2).setText(str(cnt))
+                    self.table_grid_summary.item(table_row, 3).setText(f"{pct:.1f}%")
+
+                zone_id += 1
+                table_row += 1
+
+        hotspot_pct = (hotspot_cnt / float(total)) * 100.0 if total > 0 else 0.0
+        self.lbl_grid_hotspot.setText(
+            self.tr("grid_hotspot", zone=hotspot_zone, count=hotspot_cnt, pct=f"{hotspot_pct:.1f}")
+        )
+
     def retranslate_ui(self):
         """Updates all visible UI strings based on the currently selected language."""
         self.setWindowTitle(self.tr("window_title"))
         self.btn_lang.setText(self.tr("lang_button"))
+
+        # Tabs
+        self.tab_widget.setTabText(0, self.tr("tab_overview"))
+        self.tab_widget.setTabText(1, self.tr("tab_analysis"))
+        self.tab_widget.setTabText(2, self.tr("tab_grid"))
 
         # Slice label
         if self.is_3d and self.num_slices > 1:
@@ -687,7 +1150,7 @@ class SiCDefectMainWindow(QMainWindow):
         self.btn_fit.setText(self.tr("fit_view"))
         self.btn_100.setText(self.tr("zoom_100"))
 
-        # Group 1
+        # Tab 1: Overview
         self.grp_file.setTitle(self.tr("grp_file"))
         self.btn_open.setText(self.tr("btn_open"))
         self.btn_change_model.setText(self.tr("btn_change_model"))
@@ -709,7 +1172,6 @@ class SiCDefectMainWindow(QMainWindow):
                 )
             )
 
-        # Group 2
         self.grp_analysis.setTitle(self.tr("grp_analysis"))
         self.btn_run.setText(self.tr("btn_run"))
 
@@ -729,11 +1191,9 @@ class SiCDefectMainWindow(QMainWindow):
             else:
                 self.lbl_status.setText(self.tr("status_ready"))
 
-        # Group 3
         self.grp_results.setTitle(self.tr("grp_results"))
         self.table_summary.setHorizontalHeaderLabels(self.tr("table_headers"))
 
-        # Table row headers update
         row_keys = [
             "row_bpd",
             "row_ted",
@@ -752,6 +1212,27 @@ class SiCDefectMainWindow(QMainWindow):
         self.chk_tsd.setText(self.tr("chk_tsd"))
         self.chk_particle.setText(self.tr("chk_particle"))
         self.btn_export.setText(self.tr("btn_export"))
+
+        # Tab 2: Precision Analysis
+        self.grp_bpd_analysis.setTitle(self.tr("analysis_bpd_title"))
+        self.lbl_bpd_desc.setText(self.tr("analysis_bpd_desc"))
+        self.lbl_bpd_min.setText(self.tr("analysis_bpd_min", val=self.slider_bpd_min.value()))
+        self.lbl_bpd_max.setText(self.tr("analysis_bpd_max", val=self.slider_bpd_max.value()))
+        self.lbl_bpd_stats.setText(self.tr("analysis_bpd_stats"))
+        self.btn_bpd_hist.setText(self.tr("analysis_bpd_btn"))
+
+        self.grp_tsd_analysis.setTitle(self.tr("analysis_tsd_title"))
+        self.lbl_tsd_desc.setText(self.tr("analysis_tsd_desc"))
+        self.lbl_tsd_angle.setText(self.tr("analysis_tsd_angle", val=self.slider_tsd_angle.value()))
+        self.lbl_tsd_margin.setText(self.tr("analysis_tsd_margin", val=self.slider_tsd_margin.value()))
+        self.btn_tsd_vector.setText(self.tr("analysis_tsd_btn"))
+
+        # Tab 3: Grid
+        self.chk_grid_overlay.setText(self.tr("chk_grid_overlay"))
+        self.lbl_grid_intro.setText(self.tr("grid_intro"))
+        self.table_grid_summary.setHorizontalHeaderLabels(self.tr("grid_headers"))
+        if self.last_results is None:
+            self.lbl_grid_hotspot.setText(self.tr("grid_no_data"))
 
     # --------------------------------------------------------------------------
     # File Loading and Image Rendering
@@ -832,6 +1313,11 @@ class SiCDefectMainWindow(QMainWindow):
             self.prepare_slice_cache()
             self.render_fullres_image()
             self.canvas.fit_in_view()
+
+            # Build 3x3 grid overlay and reset grid density stats
+            self.canvas.update_grid_overlay(w, h)
+            self.update_grid_stats(None)
+
             self.lbl_status.setText(self.tr("status_loaded"))
         except Exception as e:
             QMessageBox.critical(self, self.tr("load_error_title"), self.tr("load_error_msg", e=e))
@@ -994,6 +1480,9 @@ class SiCDefectMainWindow(QMainWindow):
         self.canvas.set_overlay_visibility("TED", self.chk_ted.isChecked())
         self.canvas.set_overlay_visibility("TSD", self.chk_tsd.isChecked())
         self.canvas.set_overlay_visibility("Particle", self.chk_particle.isChecked())
+
+        # Update 3x3 Wafer Grid Density Map and Block Buttons
+        self.update_grid_stats(defects)
 
         self.btn_export.setEnabled(True)
 
