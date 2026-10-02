@@ -335,6 +335,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=1, help="Training epochs (use 1 for fast dry-run)")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
     parser.add_argument("--imgsz", type=int, default=640, help="Image size")
+    parser.add_argument("--device", type=str, default=None, help="Device ('mps', 'cuda:0', 'cpu')")
     default_base_weights = (
         "models/best_2d_base.pt"
         if Path("models/best_2d_base.pt").exists()
