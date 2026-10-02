@@ -233,23 +233,94 @@ def apply_clahe(
     return enhanced
 
 
+def denoise_image(
+    image_8bit: np.ndarray,
+    method: Optional[str] = "bilateral",
+) -> np.ndarray:
+    """Applies edge-preserving noise reduction to suppress wafer background grain.
+
+    Args:
+        image_8bit: 8-bit single-channel image (uint8).
+        method: Denoising method: 'bilateral' (edge-preserving), 'gaussian' (mild smooth), or None/'none'.
+
+    Returns:
+        Filtered 8-bit image with sharp defect edges preserved.
+    """
+    if method is None or method.lower() in ("none", "off", "disable"):
+        return image_8bit
+
+    if image_8bit.dtype != np.uint8:
+        image_8bit = normalize_16bit_to_8bit(image_8bit)
+
+    m = method.lower()
+    if m == "bilateral":
+        # Bilateral filter: smooths flat grain while maintaining steep defect core gradients
+        return cv2.bilateralFilter(image_8bit, d=5, sigmaColor=20, sigmaSpace=20)
+    elif m == "gaussian":
+        # Mild 3x3 Gaussian smoothing
+        return cv2.GaussianBlur(image_8bit, (3, 3), sigmaX=0.6, sigmaY=0.6)
+    else:
+        return image_8bit
+
+
+def enhance_ted_contrast(
+    image_8bit: np.ndarray,
+    clip_limit: float = 2.5,
+    tile_grid_size: Tuple[int, int] = (8, 8),
+    denoise_method: Optional[str] = "bilateral",
+) -> np.ndarray:
+    """Enhances subtle dislocation contrasts (especially tiny TED pinpoint cores).
+
+    Combines edge-preserving noise reduction (Bilateral filter) with adaptive histogram
+    equalization (CLAHE) to boost defect core contrast without blowing up sensor grain.
+
+    Args:
+        image_8bit: 8-bit single-channel image (uint8).
+        clip_limit: CLAHE clip limit (recommended 2.0 ~ 3.0 for XRT dislocations).
+        tile_grid_size: CLAHE grid size (default: (8, 8)).
+        denoise_method: Noise suppression before CLAHE ('bilateral', 'gaussian', or None).
+
+    Returns:
+        Contrast-enhanced 8-bit image with distinct defect cores.
+    """
+    # 1. Suppress sensor grain while preserving pinpoint dislocation core edges
+    denoised = denoise_image(image_8bit, method=denoise_method)
+
+    # 2. Local contrast enhancement via CLAHE
+    enhanced = apply_clahe(denoised, clip_limit=clip_limit, tile_grid_size=tile_grid_size)
+    return enhanced
+
+
 def preprocess_xrt_image(
     image: np.ndarray,
     clip_limit: float = 2.5,
     use_percentile: bool = True,
+    tile_grid_size: Tuple[int, int] = (8, 8),
+    denoise_method: Optional[str] = "bilateral",
+    p_min: float = 0.5,
+    p_max: float = 99.5,
 ) -> np.ndarray:
-    """End-to-end preprocessing pipeline: 16-bit Normalization + CLAHE.
+    """End-to-end preprocessing pipeline: 16-bit Normalization + Grain Denoising + CLAHE.
 
     Args:
         image: Raw XRT image array (grayscale or RGB, uint8 or uint16).
-        clip_limit: CLAHE clip limit.
-        use_percentile: Outlier clipping toggle.
+        clip_limit: CLAHE clip limit (2.0 ~ 3.0).
+        use_percentile: Outlier clipping toggle for dynamic range compression.
+        tile_grid_size: Grid size for CLAHE (default: (8, 8)).
+        denoise_method: Filter to prevent grain amplification ('bilateral', 'gaussian', or None).
+        p_min: Lower percentile threshold.
+        p_max: Upper percentile threshold.
 
     Returns:
         Preprocessed 8-bit single-channel image ready for DL backbones (YOLO).
     """
-    img_8bit = normalize_16bit_to_8bit(image, use_percentile=use_percentile)
-    enhanced = apply_clahe(img_8bit, clip_limit=clip_limit)
+    img_8bit = normalize_16bit_to_8bit(image, use_percentile=use_percentile, p_min=p_min, p_max=p_max)
+    enhanced = enhance_ted_contrast(
+        img_8bit,
+        clip_limit=clip_limit,
+        tile_grid_size=tile_grid_size,
+        denoise_method=denoise_method,
+    )
     return enhanced
 
 

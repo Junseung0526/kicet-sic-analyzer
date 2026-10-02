@@ -40,14 +40,26 @@ from src.preprocess import (
 
 
 # Per-Class Dynamic Confidence Thresholds
-# Dislocation lines (BPD) have subtle X-ray diffraction contrast and require lower cutoff (0.04)
-# Point-like dislocations (TED/TSD) require balanced cutoffs (0.12, 0.15) to prevent background noise
+# Dislocation lines (BPD): subtle X-ray diffraction contrast, lower cutoff (0.04) prevents missed detections
+# Threading Edge Dislocation (TED): small pinpoint core, 0.18 (0.15~0.20) minimizes False Negatives (FN)
+# Threading Screw Dislocation (TSD): broad strain field & halo, 0.38 (0.35~0.40) suppresses False Positives (FP)
+# Surface Particles: distinct contrast anomaly, 0.25
 DEFAULT_CLASS_CONF_THRESHOLDS: Dict[str, float] = {
     "BPD": 0.04,
-    "TED": 0.12,
-    "TSD": 0.15,
-    "Particle": 0.20,
+    "TED": 0.18,
+    "TSD": 0.38,
+    "Particle": 0.25,
 }
+
+# Geometric & Morphology Thresholds for TED vs TSD Post-Processing Correction
+# TSD typically has a large lattice strain field and wide diffraction core (area > 280 px^2, diameter > 18 px)
+# TED is a pinpoint defect with localized displacement (area < 280 px^2, diameter < 18 px)
+TSD_MIN_AREA_THRESHOLD: float = 280.0         # TSD smaller than this is reclassified to TED if not near BPD
+TSD_MIN_EQUIV_DIAMETER: float = 18.0         # Equivalent circle diameter in pixels
+TED_MAX_AREA_THRESHOLD: float = 480.0         # TED larger than this with strong contrast depth is corrected to TSD
+TED_MAX_EQUIV_DIAMETER: float = 24.0         # Equivalent circle diameter in pixels
+TED_TSD_CONTRAST_DEPTH_THRESH: float = 35.0  # Peak-to-valley contrast depth within bounding box
+BPD_PROXIMITY_RADIUS_PX: float = 50.0        # Proximity distance to BPD (pixels) to protect conversion sites
 
 
 def nms_boxes(
@@ -291,6 +303,138 @@ def detect_surface_particles(
     return updated_defects, counts
 
 
+def refine_ted_tsd_classifications(
+    defects: List[Dict[str, Any]],
+    image: Optional[np.ndarray] = None,
+    tsd_min_area: float = TSD_MIN_AREA_THRESHOLD,
+    tsd_min_diameter: float = TSD_MIN_EQUIV_DIAMETER,
+    ted_max_area: float = TED_MAX_AREA_THRESHOLD,
+    ted_max_diameter: float = TED_MAX_EQUIV_DIAMETER,
+    contrast_depth_thresh: float = TED_TSD_CONTRAST_DEPTH_THRESH,
+    bpd_proximity_radius: float = BPD_PROXIMITY_RADIUS_PX,
+    enabled: bool = True,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """Geometric & morphology post-processing to resolve boundary ambiguity between TED and TSD.
+
+    Dislocation Physics:
+    - TSD (Threading Screw Dislocation) has a large Burgers vector (b = [0001]) creating a broad
+      lattice strain field (typically equiv diameter > 18~20px, area > 280px²).
+    - TED (Threading Edge Dislocation) has a smaller Burgers vector with localized pinpoint contrast
+      (typically equiv diameter < 16~18px, area < 280px²).
+    - If a TSD is detected with tiny area/diameter and is not connected to a BPD conversion site,
+      it is reclassified as TED (reducing TED false negatives).
+    - If a TED is detected with large area/diameter and prominent central contrast depth,
+      it is corrected to TSD (reducing TSD false negatives).
+
+    Args:
+        defects: List of detected defect dictionaries.
+        image: Optional 2D wafer image array for contrast depth measurement.
+        tsd_min_area: Minimum area for valid TSD in px².
+        tsd_min_diameter: Minimum equivalent diameter for valid TSD in px.
+        ted_max_area: Maximum area for typical TED in px².
+        ted_max_diameter: Maximum equivalent diameter for typical TED in px.
+        contrast_depth_thresh: Min peak-to-valley contrast depth to promote TED to TSD.
+        bpd_proximity_radius: Pixel distance within which TSDs near BPDs are preserved.
+        enabled: Whether to apply refinement.
+
+    Returns:
+        Tuple of (refined defects list, updated class counts dictionary).
+    """
+    if not enabled or not defects:
+        counts = {name: 0 for name in CLASS_NAMES.values()}
+        for d in defects:
+            cname = d.get("class_name", "")
+            if cname in counts:
+                counts[cname] += 1
+        return defects, counts
+
+    # Collect BPD defect boxes to test conversion site proximity
+    bpd_boxes = [d.get("bbox_xyxy", [0, 0, 0, 0]) for d in defects if d.get("class_name") == "BPD"]
+
+    # Normalize image to 8-bit for contrast calculation if provided
+    img_gray = None
+    if image is not None:
+        if image.ndim == 3 and image.shape[2] in (3, 4):
+            img_gray = cv2.cvtColor(image[:, :, :3], cv2.COLOR_RGB2GRAY)
+        elif image.ndim == 3 and image.shape[0] in (3, 4):
+            img_gray = cv2.cvtColor(np.transpose(image[:3, :, :], (1, 2, 0)), cv2.COLOR_RGB2GRAY)
+        else:
+            img_gray = image
+        if img_gray.dtype != np.uint8:
+            img_gray = normalize_16bit_to_8bit(img_gray)
+
+    h_img, w_img = img_gray.shape[:2] if img_gray is not None else (0, 0)
+
+    refined: List[Dict[str, Any]] = []
+
+    for d in defects:
+        item = dict(d)
+        cname = item.get("class_name", "")
+        bx1, by1, bx2, by2 = item.get("bbox_xyxy", [0, 0, 0, 0])
+        w = max(1.0, bx2 - bx1)
+        h = max(1.0, by2 - by1)
+        area = float(w * h)
+        equiv_diam = float(2.0 * np.sqrt(area / np.pi))
+        item["area_px"] = round(area, 1)
+        item["equiv_diameter_px"] = round(equiv_diam, 1)
+
+        # Measure contrast depth within bbox and immediate margin
+        contrast_depth = 0.0
+        if img_gray is not None and w_img > 0 and h_img > 0:
+            pad = 4
+            x1_c = max(0, min(int(round(bx1 - pad)), w_img - 1))
+            x2_c = max(0, min(int(round(bx2 + pad)), w_img))
+            y1_c = max(0, min(int(round(by1 - pad)), h_img - 1))
+            y2_c = max(0, min(int(round(by2 + pad)), h_img))
+            if x2_c > x1_c and y2_c > y1_c:
+                crop = img_gray[y1_c:y2_c, x1_c:x2_c]
+                contrast_depth = float(np.max(crop)) - float(np.min(crop))
+        item["contrast_depth"] = round(contrast_depth, 1)
+
+        # Check proximity to any BPD line
+        is_near_bpd = False
+        cx = (bx1 + bx2) / 2.0
+        cy = (by1 + by2) / 2.0
+        for bbox_bpd in bpd_boxes:
+            bpx1, bpy1, bpx2, bpy2 = bbox_bpd
+            near_x = max(bpx1, min(cx, bpx2))
+            near_y = max(bpy1, min(cy, bpy2))
+            dist = float(np.hypot(cx - near_x, cy - near_y))
+            if dist <= bpd_proximity_radius:
+                is_near_bpd = True
+                break
+
+        # Rule 1: TSD with tiny area/diameter and isolated from BPD -> Reclassify to TED
+        if cname == "TSD":
+            if (area < tsd_min_area or equiv_diam < tsd_min_diameter) and not is_near_bpd:
+                item["class_id"] = 1
+                item["class_name"] = "TED"
+                item["sub_class"] = "TED"
+                item["reclassified_from"] = "TSD"
+                item["reclassify_reason"] = f"Area {area:.0f}px² < {tsd_min_area:.0f}px² (equiv diam {equiv_diam:.1f}px)"
+
+        # Rule 2: TED with unusually large area/diameter and strong contrast -> Correct to TSD
+        elif cname == "TED":
+            if (area > ted_max_area or equiv_diam > ted_max_diameter) and (contrast_depth >= contrast_depth_thresh or img_gray is None):
+                item["class_id"] = 2
+                item["class_name"] = "TSD"
+                item["sub_class"] = "TSD"
+                item["reclassified_from"] = "TED"
+                item["reclassify_reason"] = f"Area {area:.0f}px² > {ted_max_area:.0f}px², contrast depth {contrast_depth:.0f}"
+
+        refined.append(item)
+
+    # Recalculate IDs and class counts
+    counts = {name: 0 for name in CLASS_NAMES.values()}
+    for idx, d in enumerate(refined, 1):
+        d["defect_id"] = idx
+        name = d.get("class_name", "")
+        if name in counts:
+            counts[name] += 1
+
+    return refined, counts
+
+
 class WaferInferenceEngine:
     """Inference engine performing sliding-window defect detection using PyTorch YOLO."""
 
@@ -362,6 +506,9 @@ class WaferInferenceEngine:
         overlap: float = 0.2,
         progress_callback: Optional[Callable[[int, int], None]] = None,
         detect_particles: bool = True,
+        refine_ted_tsd: bool = True,
+        tsd_min_area: float = TSD_MIN_AREA_THRESHOLD,
+        ted_max_area: float = TED_MAX_AREA_THRESHOLD,
     ) -> Dict[str, Any]:
         """Runs sliding-window inference across the entire wafer image."""
         h, w = image.shape[:2]
@@ -433,6 +580,16 @@ class WaferInferenceEngine:
             filtered_defects, counts = detect_surface_particles(
                 image=image,
                 existing_defects=filtered_defects,
+            )
+
+        # Geometric & morphology post-processing: TED vs TSD refinement
+        if refine_ted_tsd:
+            filtered_defects, counts = refine_ted_tsd_classifications(
+                defects=filtered_defects,
+                image=image,
+                tsd_min_area=tsd_min_area,
+                ted_max_area=ted_max_area,
+                enabled=True,
             )
 
         return {
@@ -577,6 +734,9 @@ class OnnxWaferInferenceEngine:
         overlap: float = 0.2,
         progress_callback: Optional[Callable[[int, int], None]] = None,
         detect_particles: bool = True,
+        refine_ted_tsd: bool = True,
+        tsd_min_area: float = TSD_MIN_AREA_THRESHOLD,
+        ted_max_area: float = TED_MAX_AREA_THRESHOLD,
     ) -> Dict[str, Any]:
         """Runs sliding-window ONNX inference across the entire wafer image."""
         h, w = image.shape[:2]
@@ -648,6 +808,16 @@ class OnnxWaferInferenceEngine:
             filtered_defects, counts = detect_surface_particles(
                 image=image,
                 existing_defects=filtered_defects,
+            )
+
+        # Geometric & morphology post-processing: TED vs TSD refinement
+        if refine_ted_tsd:
+            filtered_defects, counts = refine_ted_tsd_classifications(
+                defects=filtered_defects,
+                image=image,
+                tsd_min_area=tsd_min_area,
+                ted_max_area=ted_max_area,
+                enabled=True,
             )
 
         print(f"[ONNX Inference Complete] Total defects detected: {len(filtered_defects)}")
@@ -1312,15 +1482,24 @@ def export_defect_reports(
             "BBox_Y2",
             "Width",
             "Height",
+            "Area_px",
+            "Equiv_Diam_px",
             "Length_um",
             "Angle_deg",
             "Angle_Label",
             "TSD_Angle_deg",
             "TSD_Angle_Label",
+            "Reclassified_From",
+            "Reclassify_Reason",
         ])
         for d in defects:
             ang = d.get("angle_deg", "N/A")
             ang_lbl = d.get("angle_label", "N/A")
+            tsd_ang = d.get("tsd_angle_deg", ang)
+            tsd_lbl = d.get("tsd_angle_label", ang_lbl)
+            w_box = d.get("size", [0, 0])[0]
+            h_box = d.get("size", [0, 0])[1]
+            area_px = d.get("area_px", round(w_box * h_box, 1))
             writer.writerow([
                 d.get("defect_id", 0),
                 d.get("class_id", 0),
@@ -1333,13 +1512,17 @@ def export_defect_reports(
                 d.get("bbox_xyxy", [0, 0, 0, 0])[1],
                 d.get("bbox_xyxy", [0, 0, 0, 0])[2],
                 d.get("bbox_xyxy", [0, 0, 0, 0])[3],
-                d.get("size", [0, 0])[0],
-                d.get("size", [0, 0])[1],
+                w_box,
+                h_box,
+                area_px,
+                d.get("equiv_diameter_px", round(2.0 * np.sqrt(max(0.1, area_px) / np.pi), 1)),
                 d.get("length_um", "N/A"),
                 ang,
                 ang_lbl,
-                ang,
-                ang_lbl,
+                tsd_ang,
+                tsd_lbl,
+                d.get("reclassified_from", ""),
+                d.get("reclassify_reason", ""),
             ])
 
     print(f"[Report] Defect reports exported to:")

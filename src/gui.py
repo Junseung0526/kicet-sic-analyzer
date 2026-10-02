@@ -123,6 +123,15 @@ TRANSLATIONS = {
         "file_info": "파일명: {name}\n크기: {w} x {h} px\n타입: {dtype} (범위: [{min_val:.0f}, {max_val:.0f}])",
         "model_info": "모델: {name}",
         "btn_change_model": "가중치 선택",
+        "grp_detect_settings": "결함 탐지 및 전처리 설정",
+        "chk_enhance_contrast": "TED 미세 대비 강화 (Bilateral + CLAHE)",
+        "lbl_clahe_clip": "대비 제한 (Clip Limit):",
+        "lbl_conf_ted": "TED 신뢰도 임계값:",
+        "lbl_conf_tsd": "TSD 신뢰도 임계값:",
+        "lbl_conf_bpd": "BPD 신뢰도 임계값:",
+        "chk_refine_ted_tsd": "TED ↔ TSD 크기/기하학 후처리 보정",
+        "lbl_tsd_min_area": "TSD 최소 면적 (TED 재할당):",
+        "lbl_ted_max_area": "TED 최대 면적 (TSD 보정):",
         "grp_analysis": "자동 결함 분석",
         "btn_run": "⚡ 웨이퍼 전수 분석 실행 (ONNX)",
         "status_ready": "준비 완료",
@@ -266,6 +275,15 @@ TRANSLATIONS = {
         "file_info": "File: {name}\nSize: {w} x {h} px\nType: {dtype} (Range: [{min_val:.0f}, {max_val:.0f}])",
         "model_info": "Model: {name}",
         "btn_change_model": "Select Weights",
+        "grp_detect_settings": "Detection & Preprocessing Settings",
+        "chk_enhance_contrast": "Enhance TED Contrast (Bilateral + CLAHE)",
+        "lbl_clahe_clip": "Clip Limit:",
+        "lbl_conf_ted": "TED Conf Thresh:",
+        "lbl_conf_tsd": "TSD Conf Thresh:",
+        "lbl_conf_bpd": "BPD Conf Thresh:",
+        "chk_refine_ted_tsd": "TED ↔ TSD Geometric Post-processing",
+        "lbl_tsd_min_area": "TSD Min Area (Reclass to TED):",
+        "lbl_ted_max_area": "TED Max Area (Correct to TSD):",
         "grp_analysis": "Automated Defect Analysis",
         "btn_run": "⚡ Run Full-Wafer Analysis (ONNX)",
         "status_ready": "Ready",
@@ -413,6 +431,12 @@ class InferenceWorker(QThread):
         iou_threshold: float = 0.45,
         patch_size: int = 640,
         overlap: float = 0.2,
+        class_conf_thresholds: Optional[Dict[str, float]] = None,
+        enhance_contrast: bool = True,
+        clahe_clip_limit: float = 2.5,
+        refine_ted_tsd: bool = True,
+        tsd_min_area: float = 280.0,
+        ted_max_area: float = 480.0,
     ):
         super().__init__()
         self.image_array = image_array
@@ -421,21 +445,32 @@ class InferenceWorker(QThread):
         self.iou_threshold = iou_threshold
         self.patch_size = patch_size
         self.overlap = overlap
+        self.class_conf_thresholds = class_conf_thresholds
+        self.enhance_contrast = enhance_contrast
+        self.clahe_clip_limit = clahe_clip_limit
+        self.refine_ted_tsd = refine_ted_tsd
+        self.tsd_min_area = tsd_min_area
+        self.ted_max_area = ted_max_area
 
     def run(self):
         try:
-            # 1. Preprocess 16-bit to 8-bit CLAHE
-            preprocessed = preprocess_xrt_image(self.image_array)
+            # 1. Preprocess 16-bit to 8-bit CLAHE with edge-preserving grain suppression
+            preprocessed = preprocess_xrt_image(
+                self.image_array,
+                clip_limit=self.clahe_clip_limit,
+                denoise_method="bilateral" if self.enhance_contrast else None,
+            )
 
-            # 2. Get optimal engine (ONNX Runtime prioritized)
+            # 2. Get optimal engine (ONNX Runtime prioritized) with class-specific thresholds
             engine = get_inference_engine(
                 model_path=self.model_path,
                 conf_threshold=self.conf_threshold,
                 iou_threshold=self.iou_threshold,
+                class_conf_thresholds=self.class_conf_thresholds,
                 prefer_onnx=True,
             )
 
-            # 3. Sliding-window inference with progress callback
+            # 3. Sliding-window inference with progress callback and geometric refinement
             def on_progress(cur: int, tot: int):
                 self.progress_signal.emit(cur, tot)
 
@@ -444,6 +479,10 @@ class InferenceWorker(QThread):
                 patch_size=self.patch_size,
                 overlap=self.overlap,
                 progress_callback=on_progress,
+                detect_particles=True,
+                refine_ted_tsd=self.refine_ted_tsd,
+                tsd_min_area=self.tsd_min_area,
+                ted_max_area=self.ted_max_area,
             )
             self.finished_signal.emit(results)
         except Exception as e:
@@ -2228,7 +2267,17 @@ class SiCDefectMainWindow(QMainWindow):
 
     def init_overview_tab(self):
         """Initializes Tab 1: Overview controls, inference trigger, summary table, and overlays."""
-        tab_layout = QVBoxLayout(self.tab_overview)
+        outer_layout = QVBoxLayout(self.tab_overview)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setStyleSheet("background-color: transparent;")
+
+        content_widget = QWidget()
+        tab_layout = QVBoxLayout(content_widget)
         tab_layout.setContentsMargins(6, 8, 6, 8)
         tab_layout.setSpacing(8)
 
@@ -2236,7 +2285,7 @@ class SiCDefectMainWindow(QMainWindow):
         self.grp_file = QGroupBox("File & Model Configuration")
         grp_file_layout = QVBoxLayout(self.grp_file)
 
-        self.btn_open = QPushButton("📂 Open XRT Image (.tif / .tiff)")
+        self.btn_open = QPushButton("📂 Open Image (.tif, .jpg, .png, etc.)")
         self.btn_open.setFixedHeight(34)
         self.btn_open.clicked.connect(self.on_open_file_dialog)
         grp_file_layout.addWidget(self.btn_open)
@@ -2256,6 +2305,96 @@ class SiCDefectMainWindow(QMainWindow):
         grp_file_layout.addLayout(model_hbox)
 
         tab_layout.addWidget(self.grp_file)
+
+        # Group 1.5: Detection & Preprocessing Parameters
+        self.grp_detect_settings = QGroupBox("Detection & Preprocessing Settings")
+        detect_layout = QVBoxLayout(self.grp_detect_settings)
+        detect_layout.setContentsMargins(8, 8, 8, 8)
+        detect_layout.setSpacing(6)
+
+        # 1. Contrast enhancement (CLAHE + Bilateral denoise)
+        self.chk_enhance_contrast = QCheckBox("Enhance TED Contrast (Bilateral + CLAHE)")
+        self.chk_enhance_contrast.setChecked(True)
+        detect_layout.addWidget(self.chk_enhance_contrast)
+
+        clahe_row = QHBoxLayout()
+        self.lbl_clahe_clip = QLabel("Clip Limit:")
+        self.spin_clahe_clip = QDoubleSpinBox()
+        self.spin_clahe_clip.setRange(1.0, 5.0)
+        self.spin_clahe_clip.setSingleStep(0.1)
+        self.spin_clahe_clip.setValue(2.5)
+        self.spin_clahe_clip.setFixedWidth(70)
+        clahe_row.addWidget(self.lbl_clahe_clip)
+        clahe_row.addWidget(self.spin_clahe_clip)
+        clahe_row.addStretch(1)
+        detect_layout.addLayout(clahe_row)
+
+        # 2. Per-class confidence thresholds
+        conf_grid = QGridLayout()
+        conf_grid.setContentsMargins(0, 2, 0, 2)
+        conf_grid.setSpacing(4)
+
+        self.lbl_conf_ted = QLabel("TED Conf:")
+        self.spin_conf_ted = QDoubleSpinBox()
+        self.spin_conf_ted.setRange(0.01, 1.00)
+        self.spin_conf_ted.setSingleStep(0.01)
+        self.spin_conf_ted.setValue(0.18)
+        self.spin_conf_ted.setFixedWidth(65)
+
+        self.lbl_conf_tsd = QLabel("TSD Conf:")
+        self.spin_conf_tsd = QDoubleSpinBox()
+        self.spin_conf_tsd.setRange(0.01, 1.00)
+        self.spin_conf_tsd.setSingleStep(0.01)
+        self.spin_conf_tsd.setValue(0.38)
+        self.spin_conf_tsd.setFixedWidth(65)
+
+        self.lbl_conf_bpd = QLabel("BPD Conf:")
+        self.spin_conf_bpd = QDoubleSpinBox()
+        self.spin_conf_bpd.setRange(0.01, 1.00)
+        self.spin_conf_bpd.setSingleStep(0.01)
+        self.spin_conf_bpd.setValue(0.04)
+        self.spin_conf_bpd.setFixedWidth(65)
+
+        conf_grid.addWidget(self.lbl_conf_ted, 0, 0)
+        conf_grid.addWidget(self.spin_conf_ted, 0, 1)
+        conf_grid.addWidget(self.lbl_conf_tsd, 0, 2)
+        conf_grid.addWidget(self.spin_conf_tsd, 0, 3)
+        conf_grid.addWidget(self.lbl_conf_bpd, 1, 0)
+        conf_grid.addWidget(self.spin_conf_bpd, 1, 1)
+        detect_layout.addLayout(conf_grid)
+
+        # 3. Geometric Post-Processing (TED ↔ TSD)
+        self.chk_refine_geometry = QCheckBox("TED ↔ TSD Geometric Post-processing")
+        self.chk_refine_geometry.setChecked(True)
+        detect_layout.addWidget(self.chk_refine_geometry)
+
+        geom_grid = QGridLayout()
+        geom_grid.setContentsMargins(0, 2, 0, 2)
+        geom_grid.setSpacing(4)
+
+        self.lbl_tsd_min_area = QLabel("TSD Min Area:")
+        self.spin_tsd_min_area = QSpinBox()
+        self.spin_tsd_min_area.setRange(50, 2000)
+        self.spin_tsd_min_area.setSingleStep(10)
+        self.spin_tsd_min_area.setValue(280)
+        self.spin_tsd_min_area.setSuffix(" px²")
+        self.spin_tsd_min_area.setFixedWidth(85)
+
+        self.lbl_ted_max_area = QLabel("TED Max Area:")
+        self.spin_ted_max_area = QSpinBox()
+        self.spin_ted_max_area.setRange(100, 3000)
+        self.spin_ted_max_area.setSingleStep(10)
+        self.spin_ted_max_area.setValue(480)
+        self.spin_ted_max_area.setSuffix(" px²")
+        self.spin_ted_max_area.setFixedWidth(85)
+
+        geom_grid.addWidget(self.lbl_tsd_min_area, 0, 0)
+        geom_grid.addWidget(self.spin_tsd_min_area, 0, 1)
+        geom_grid.addWidget(self.lbl_ted_max_area, 1, 0)
+        geom_grid.addWidget(self.spin_ted_max_area, 1, 1)
+        detect_layout.addLayout(geom_grid)
+
+        tab_layout.addWidget(self.grp_detect_settings)
 
         # Group 2: Analysis Execution
         self.grp_analysis = QGroupBox("Automated Defect Analysis")
@@ -2320,6 +2459,9 @@ class SiCDefectMainWindow(QMainWindow):
 
         tab_layout.addWidget(self.grp_results)
         tab_layout.addStretch(1)
+
+        scroll_area.setWidget(content_widget)
+        outer_layout.addWidget(scroll_area)
 
     def init_summary_table(self):
         """Initializes empty defect statistics table with 6 rows."""
@@ -3207,6 +3349,17 @@ class SiCDefectMainWindow(QMainWindow):
                 )
             )
 
+        if hasattr(self, "grp_detect_settings"):
+            self.grp_detect_settings.setTitle(self.tr("grp_detect_settings"))
+            self.chk_enhance_contrast.setText(self.tr("chk_enhance_contrast"))
+            self.lbl_clahe_clip.setText(self.tr("lbl_clahe_clip"))
+            self.lbl_conf_ted.setText(self.tr("lbl_conf_ted"))
+            self.lbl_conf_tsd.setText(self.tr("lbl_conf_tsd"))
+            self.lbl_conf_bpd.setText(self.tr("lbl_conf_bpd"))
+            self.chk_refine_geometry.setText(self.tr("chk_refine_ted_tsd"))
+            self.lbl_tsd_min_area.setText(self.tr("lbl_tsd_min_area"))
+            self.lbl_ted_max_area.setText(self.tr("lbl_ted_max_area"))
+
         self.grp_analysis.setTitle(self.tr("grp_analysis"))
         self.btn_run.setText(self.tr("btn_run"))
 
@@ -3594,13 +3747,32 @@ class SiCDefectMainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.canvas.show_loading(self.tr("loading_scanning"), "0% (0 / 1)")
 
+        # Gather dynamic detection & preprocessing parameters
+        class_confs = {
+            "BPD": float(self.spin_conf_bpd.value()) if hasattr(self, "spin_conf_bpd") else 0.04,
+            "TED": float(self.spin_conf_ted.value()) if hasattr(self, "spin_conf_ted") else 0.18,
+            "TSD": float(self.spin_conf_tsd.value()) if hasattr(self, "spin_conf_tsd") else 0.38,
+            "Particle": 0.25,
+        }
+        enhance_contrast = self.chk_enhance_contrast.isChecked() if hasattr(self, "chk_enhance_contrast") else True
+        clahe_clip = float(self.spin_clahe_clip.value()) if hasattr(self, "spin_clahe_clip") else 2.5
+        refine_geom = self.chk_refine_geometry.isChecked() if hasattr(self, "chk_refine_geometry") else True
+        tsd_min_a = float(self.spin_tsd_min_area.value()) if hasattr(self, "spin_tsd_min_area") else 280.0
+        ted_max_a = float(self.spin_ted_max_area.value()) if hasattr(self, "spin_ted_max_area") else 480.0
+
         # Launch QThread worker
         self.worker = InferenceWorker(
             image_array=self.current_slice_2d,
             model_path=self.model_path,
-            conf_threshold=0.20,
+            conf_threshold=min(class_confs.values()),
             patch_size=640,
             overlap=0.2,
+            class_conf_thresholds=class_confs,
+            enhance_contrast=enhance_contrast,
+            clahe_clip_limit=clahe_clip,
+            refine_ted_tsd=refine_geom,
+            tsd_min_area=tsd_min_a,
+            ted_max_area=ted_max_a,
         )
         self.worker.progress_signal.connect(self.on_inference_progress)
         self.worker.finished_signal.connect(self.on_inference_finished)
@@ -3734,15 +3906,25 @@ class SiCDefectMainWindow(QMainWindow):
                     "BBox_Y2",
                     "Width",
                     "Height",
+                    "Area_px",
+                    "Equiv_Diam_px",
                     "Length_um",
                     "Angle_deg",
                     "Angle_Label",
                     "TSD_Angle_deg",
                     "TSD_Angle_Label",
+                    "Reclassified_From",
+                    "Reclassify_Reason",
                 ])
                 for d in defects:
                     ang = d.get("angle_deg", "N/A")
                     ang_lbl = d.get("angle_label", "N/A")
+                    tsd_ang = d.get("tsd_angle_deg", ang)
+                    tsd_lbl = d.get("tsd_angle_label", ang_lbl)
+                    w_box = d.get("size", [0, 0])[0]
+                    h_box = d.get("size", [0, 0])[1]
+                    area_px = d.get("area_px", round(w_box * h_box, 1))
+                    equiv_d = d.get("equiv_diameter_px", round(2.0 * np.sqrt(max(0.1, area_px) / np.pi), 1))
                     writer.writerow([
                         d.get("defect_id", 0),
                         d.get("class_id", 0),
@@ -3755,13 +3937,17 @@ class SiCDefectMainWindow(QMainWindow):
                         d.get("bbox_xyxy", [0, 0, 0, 0])[1],
                         d.get("bbox_xyxy", [0, 0, 0, 0])[2],
                         d.get("bbox_xyxy", [0, 0, 0, 0])[3],
-                        d.get("size", [0, 0])[0],
-                        d.get("size", [0, 0])[1],
+                        w_box,
+                        h_box,
+                        area_px,
+                        equiv_d,
                         d.get("length_um", "N/A"),
                         ang,
                         ang_lbl,
-                        ang,
-                        ang_lbl,
+                        tsd_ang,
+                        tsd_lbl,
+                        d.get("reclassified_from", ""),
+                        d.get("reclassify_reason", ""),
                     ])
 
         QMessageBox.information(self, self.tr("export_success_title"), self.tr("export_success_msg", path=save_path))
