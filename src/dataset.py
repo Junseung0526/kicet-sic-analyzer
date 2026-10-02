@@ -133,11 +133,18 @@ def build_yolo_dataset(
     for d in [train_img_dir, val_img_dir, train_lbl_dir, val_lbl_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
-    IMAGE_EXTS = ("*.tif", "*.tiff", "*.TIF", "*.TIFF", "*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG", "*.bmp")
-    raw_files_set = set()
-    for ext in IMAGE_EXTS:
-        raw_files_set.update(raw_path.glob(ext))
-    raw_files = sorted(list(raw_files_set))
+    # Prioritize pure lossless TIF files if present to prevent JPG compression artifact degradation
+    tif_files = sorted(list(set(raw_path.glob("*.tif")) | set(raw_path.glob("*.tiff")) | set(raw_path.glob("*.TIF")) | set(raw_path.glob("*.TIFF"))))
+    if tif_files:
+        print(f"[Dataset] Found {len(tif_files)} high-quality lossless TIF images with ground-truth labels.")
+        print(f"[Dataset] Pure TIF mode active: Excluding {len(list(raw_path.glob('*.jpg')))} lossy JPGs to maximize mAP precision.")
+        raw_files = tif_files
+    else:
+        IMAGE_EXTS = ("*.tif", "*.tiff", "*.TIF", "*.TIFF", "*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG", "*.bmp")
+        raw_files_set = set()
+        for ext in IMAGE_EXTS:
+            raw_files_set.update(raw_path.glob(ext))
+        raw_files = sorted(list(raw_files_set))
 
     if not raw_files:
         raise FileNotFoundError(f"No valid image files (*.tif, *.jpg, *.png) found in {raw_path}")

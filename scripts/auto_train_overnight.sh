@@ -7,22 +7,20 @@ cd "$DIR"
 LOG_FILE="$DIR/runs/overnight_train.log"
 mkdir -p "$DIR/runs"
 
-echo "==========================================================" >> "$LOG_FILE"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Auto-Chained Overnight Pipeline Started" >> "$LOG_FILE"
-echo "Waiting for current dataset compilation to complete..." >> "$LOG_FILE"
+echo "==========================================================" > "$LOG_FILE"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pure-TIF Golden Training Pipeline Started" >> "$LOG_FILE"
+echo "Compiling Pure Lossless TIF Ground-Truth Dataset (9 Wafers)..." >> "$LOG_FILE"
 
-# Wait for any active 'main.py --mode dataset' processes to exit
-while pgrep -f "main.py --mode dataset" > /dev/null 2>&1; do
-    sleep 5
-done
+# Step 1: Prepare pure TIF dataset
+./venv/bin/python main.py --mode dataset >> "$LOG_FILE" 2>&1
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Dataset compilation finished successfully!" >> "$LOG_FILE"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting 20-Epoch YOLO Fine-tuning (exp_tsd_master_v1)..." >> "$LOG_FILE"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pure TIF dataset compiled successfully!" >> "$LOG_FILE"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting 20-Epoch Fine-Tuning (exp_tsd_master_v1) on base weights..." >> "$LOG_FILE"
 
-# Run 20 epochs training with baseline weights
+# Step 2: Run 20 epochs fine-tuning from models/best_2d_base.pt
 ./venv/bin/python main.py --mode train --name exp_tsd_master_v1 --epochs 20 >> "$LOG_FILE" 2>&1
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] ==========================================================" >> "$LOG_FILE"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] ALL OVERNIGHT TRAINING & ONNX EXPORT COMPLETED!" >> "$LOG_FILE"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Check weights in: models/exp_tsd_master_v1.onnx" >> "$LOG_FILE"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] PURE TIF TRAINING & ONNX EXPORT COMPLETED SUCCESSFULLY!" >> "$LOG_FILE"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Deployment Model: models/exp_tsd_master_v1.onnx" >> "$LOG_FILE"
 echo "==========================================================" >> "$LOG_FILE"
