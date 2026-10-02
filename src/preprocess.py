@@ -286,6 +286,43 @@ def parse_kicet_roi_file(
     return defects
 
 
+def extract_key_slice_from_3d_tiff(
+    tiff_path: Union[str, Path],
+    dest_path: Union[str, Path],
+    key_slice_idx: int = 0,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Extracts a single validated 2D key reference slice from a 3D multi-page TIFF stack.
+
+    Prevents negative background pollution by never blindly exporting empty stack slices.
+
+    Args:
+        tiff_path: Path to the 3D multi-page TIFF.
+        dest_path: Destination path for the single 2D TIFF.
+        key_slice_idx: Zero-based slice index matching ImageJ ROI annotations.
+
+    Returns:
+        Tuple of (slice_numpy_array, metadata_dict).
+    """
+    path = Path(tiff_path)
+    with tifffile.TiffFile(str(path)) as tif:
+        num_pages = len(tif.pages)
+        valid_idx = max(0, min(key_slice_idx, num_pages - 1))
+        slice_data = tif.pages[valid_idx].asarray()
+
+    dest = Path(dest_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tifffile.imwrite(str(dest), slice_data)
+
+    meta = {
+        "original_file": str(path),
+        "total_slices": num_pages,
+        "extracted_slice": valid_idx,
+        "shape": list(slice_data.shape),
+        "dtype": str(slice_data.dtype),
+    }
+    return slice_data, meta
+
+
 def import_kicet_dataset(
     source_dir: Union[str, Path] = "/Volumes/T9 Junseung/세라믹 기술원 데이터/XRT 2D",
     target_raw_dir: Union[str, Path] = "data/raw",
@@ -374,9 +411,13 @@ def import_kicet_dataset(
         dest_tif = dst_path / f"{dest_name}.tif"
         dest_json = dst_path / f"{dest_name}.json"
 
-        # Link or copy TIFF
+        # Link or extract single 2D slice for 3D stacks
         if not dest_tif.exists():
-            if use_symlink:
+            if meta.get("is_3d", False):
+                # 3D stack: extract only the verified key slice (slice 0) to prevent empty slice pollution
+                print(f"[3D Stack] Extracting key slice 0 from {meta['num_slices']} slices -> {dest_tif.name}")
+                tifffile.imwrite(str(dest_tif), img)
+            elif use_symlink:
                 try:
                     dest_tif.symlink_to(tiff_file.resolve())
                 except OSError:

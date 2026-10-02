@@ -39,6 +39,17 @@ from src.preprocess import (
 )
 
 
+# Per-Class Dynamic Confidence Thresholds
+# Dislocation lines (BPD) have subtle X-ray diffraction contrast and require lower cutoff (0.04)
+# Point-like dislocations (TED/TSD) require balanced cutoffs (0.12, 0.15) to prevent background noise
+DEFAULT_CLASS_CONF_THRESHOLDS: Dict[str, float] = {
+    "BPD": 0.04,
+    "TED": 0.12,
+    "TSD": 0.15,
+    "Particle": 0.20,
+}
+
+
 def nms_boxes(
     boxes: np.ndarray,
     scores: np.ndarray,
@@ -289,6 +300,7 @@ class WaferInferenceEngine:
         conf_threshold: float = 0.25,
         iou_threshold: float = 0.45,
         device: Optional[str] = None,
+        class_conf_thresholds: Optional[Dict[str, float]] = None,
     ):
         """Initializes the inference engine with a trained YOLO model."""
         if YOLO is None:
@@ -299,17 +311,27 @@ class WaferInferenceEngine:
         self.device = device
         self.class_names = CLASS_NAMES
         self.model = YOLO(str(self.model_path))
+        self.class_conf_thresholds = class_conf_thresholds or DEFAULT_CLASS_CONF_THRESHOLDS.copy()
+
+    def get_class_threshold(self, class_id: int) -> float:
+        """Returns target confidence threshold for specific class ID."""
+        cname = self.class_names.get(class_id, "")
+        if cname in self.class_conf_thresholds:
+            return float(self.class_conf_thresholds[cname])
+        return float(self.conf_threshold)
 
     def predict_patch(self, patch: np.ndarray) -> List[Dict[str, Any]]:
-        """Runs model inference on a single 8-bit patch."""
+        """Runs model inference on a single 8-bit patch with dynamic per-class thresholds."""
         if patch.ndim == 2:
             patch_rgb = cv2.cvtColor(patch, cv2.COLOR_GRAY2RGB)
         else:
             patch_rgb = patch
 
+        min_cutoff = min(min(self.class_conf_thresholds.values()), self.conf_threshold)
+
         results = self.model.predict(
             source=patch_rgb,
-            conf=self.conf_threshold,
+            conf=min_cutoff,
             device=self.device,
             verbose=False,
         )
@@ -321,13 +343,15 @@ class WaferInferenceEngine:
             clses = results[0].boxes.cls.cpu().numpy().astype(int)
 
             for b, c, cls_id in zip(boxes, confs, clses):
-                detections.append(
-                    {
-                        "box": [float(b[0]), float(b[1]), float(b[2]), float(b[3])],
-                        "conf": float(c),
-                        "class_id": int(cls_id),
-                    }
-                )
+                thresh = self.get_class_threshold(int(cls_id))
+                if c >= thresh:
+                    detections.append(
+                        {
+                            "box": [float(b[0]), float(b[1]), float(b[2]), float(b[3])],
+                            "conf": float(c),
+                            "class_id": int(cls_id),
+                        }
+                    )
 
         return detections
 
@@ -431,6 +455,7 @@ class OnnxWaferInferenceEngine:
         conf_threshold: float = 0.25,
         iou_threshold: float = 0.45,
         providers: Optional[List[str]] = None,
+        class_conf_thresholds: Optional[Dict[str, float]] = None,
     ):
         """Initializes ONNX Runtime session."""
         if ort is None:
@@ -443,6 +468,7 @@ class OnnxWaferInferenceEngine:
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         self.class_names = CLASS_NAMES
+        self.class_conf_thresholds = class_conf_thresholds or DEFAULT_CLASS_CONF_THRESHOLDS.copy()
 
         if providers is None:
             available = ort.get_available_providers()
@@ -457,6 +483,13 @@ class OnnxWaferInferenceEngine:
         self.output_name = self.session.get_outputs()[0].name
         self.input_shape = self.session.get_inputs()[0].shape  # e.g., [1, 3, 640, 640]
         self.imgsz = int(self.input_shape[2]) if len(self.input_shape) >= 4 else 640
+
+    def get_class_threshold(self, class_id: int) -> float:
+        """Returns target confidence threshold for specific class ID."""
+        cname = self.class_names.get(class_id, "")
+        if cname in self.class_conf_thresholds:
+            return float(self.class_conf_thresholds[cname])
+        return float(self.conf_threshold)
 
     def predict_patch(self, patch: np.ndarray) -> List[Dict[str, Any]]:
         """Performs raw ONNX forward inference on a single 8-bit image patch."""
@@ -494,7 +527,12 @@ class OnnxWaferInferenceEngine:
         class_ids = np.argmax(scores, axis=1)
         confidences = np.max(scores, axis=1)
 
-        mask = confidences >= self.conf_threshold
+        # Vectorized dynamic per-class thresholding
+        num_classes = scores.shape[1]
+        thresh_arr = np.array([self.get_class_threshold(cid) for cid in range(num_classes)], dtype=np.float32)
+        target_thresh = thresh_arr[class_ids]
+
+        mask = confidences >= target_thresh
         if not np.any(mask):
             return []
 
@@ -628,6 +666,7 @@ def get_inference_engine(
     model_path: Optional[Union[str, Path]] = None,
     conf_threshold: float = 0.25,
     iou_threshold: float = 0.45,
+    class_conf_thresholds: Optional[Dict[str, float]] = None,
     prefer_onnx: bool = True,
     device: Optional[str] = None,
 ) -> Union[OnnxWaferInferenceEngine, WaferInferenceEngine]:
@@ -673,6 +712,7 @@ def get_inference_engine(
             model_path=onnx_file,
             conf_threshold=conf_threshold,
             iou_threshold=iou_threshold,
+            class_conf_thresholds=class_conf_thresholds,
         )
 
     # Fallback to PyTorch YOLO
@@ -682,6 +722,7 @@ def get_inference_engine(
         conf_threshold=conf_threshold,
         iou_threshold=iou_threshold,
         device=device,
+        class_conf_thresholds=class_conf_thresholds,
     )
 
 
