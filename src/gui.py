@@ -23,10 +23,12 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
+    QContextMenuEvent,
     QFont,
     QIcon,
     QImage,
     QKeyEvent,
+    QMouseEvent,
     QPainter,
     QPen,
     QPixmap,
@@ -56,6 +58,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -1557,6 +1560,9 @@ class WaferCanvasView(QGraphicsView):
     """QGraphicsView with smooth cursor-centered wheel zoom, drag panning, and loading overlay."""
 
     zoom_changed = pyqtSignal(float)
+    defect_added = pyqtSignal(dict)
+    defect_delete_requested = pyqtSignal(float, float)
+    save_requested = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -1570,6 +1576,10 @@ class WaferCanvasView(QGraphicsView):
             "TSD": [],
             "Particle": [],
         }
+
+        # Manual Annotation Attributes
+        self.annotation_mode: bool = False
+        self.annotation_class: str = "TSD"
 
         # 3x3 Grid Overlay Elements
         self.grid_items: List[QGraphicsItem] = []
@@ -1592,6 +1602,98 @@ class WaferCanvasView(QGraphicsView):
 
         # Child Animated Loading Overlay
         self.loading_overlay = CanvasLoadingOverlay(self)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton and self.annotation_mode:
+            scene_pos = self.mapToScene(event.pos())
+            x, y = float(scene_pos.x()), float(scene_pos.y())
+            if self.pixmap_item is not None:
+                brect = self.pixmap_item.sceneBoundingRect()
+                if brect.contains(scene_pos):
+                    self.create_manual_defect_at(x, y, self.annotation_class)
+                    return
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.MiddleButton and self.annotation_mode:
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event: QContextMenuEvent):
+        scene_pos = self.mapToScene(event.pos())
+        x, y = float(scene_pos.x()), float(scene_pos.y())
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #252830;
+                color: #ffffff;
+                border: 1px solid #454c59;
+                border-radius: 6px;
+                padding: 4px;
+                font-size: 12px;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #007acc;
+                color: #ffffff;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #454c59;
+                margin: 4px 8px;
+            }
+        """)
+
+        act_tsd = menu.addAction("➕ 여기에 TSD 결함 추가 (30x30)")
+        act_ted = menu.addAction("➕ 여기에 TED 결함 추가 (16x16)")
+        act_bpd = menu.addAction("➕ 여기에 BPD 결함 추가 (40x40)")
+        act_part = menu.addAction("➕ 여기에 Particle 추가 (24x24)")
+        menu.addSeparator()
+        act_del = menu.addAction("❌ 이 위치의 가장 가까운 결함 삭제")
+        menu.addSeparator()
+        act_save = menu.addAction("💾 수동 라벨 파일 저장 (.json)")
+
+        chosen = menu.exec(event.globalPos())
+        if chosen == act_tsd:
+            self.create_manual_defect_at(x, y, "TSD")
+        elif chosen == act_ted:
+            self.create_manual_defect_at(x, y, "TED")
+        elif chosen == act_bpd:
+            self.create_manual_defect_at(x, y, "BPD")
+        elif chosen == act_part:
+            self.create_manual_defect_at(x, y, "Particle")
+        elif chosen == act_del:
+            self.defect_delete_requested.emit(x, y)
+        elif chosen == act_save:
+            self.save_requested.emit()
+
+    def create_manual_defect_at(self, cx: float, cy: float, class_name: str):
+        size_map = {"TSD": 30.0, "TED": 16.0, "BPD": 40.0, "Particle": 24.0}
+        box_size = size_map.get(class_name, 30.0)
+        half = box_size / 2.0
+        bx1 = max(0.0, cx - half)
+        by1 = max(0.0, cy - half)
+        bx2 = cx + half
+        by2 = cy + half
+
+        cls_id = {"BPD": 0, "TED": 1, "TSD": 2, "Particle": 3}.get(class_name, 2)
+        defect = {
+            "defect_id": 0,
+            "class_id": cls_id,
+            "class_name": class_name,
+            "confidence": 1.0,
+            "bbox_xyxy": [round(bx1, 1), round(by1, 1), round(bx2, 1), round(by2, 1)],
+            "center_xy": [round(cx, 1), round(cy, 1)],
+            "size": [round(box_size, 1), round(box_size, 1)],
+            "manual": True,
+        }
+        self.defect_added.emit(defect)
 
     def get_zoom_level(self) -> float:
         """Returns current zoom scale factor (1.0 = 100%)."""
@@ -2026,10 +2128,78 @@ class SiCDefectMainWindow(QMainWindow):
         left_container = QWidget()
         left_layout = QVBoxLayout(left_container)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
+        # Manual Annotation Action Bar
+        self.annotation_bar = QFrame()
+        self.annotation_bar.setStyleSheet("background-color: #202228; border: 1px solid #383c48; border-radius: 6px;")
+        ann_layout = QHBoxLayout(self.annotation_bar)
+        ann_layout.setContentsMargins(8, 4, 8, 4)
+        ann_layout.setSpacing(10)
+
+        self.btn_toggle_annot = QPushButton("✏️ 수동 라벨링 모드: OFF")
+        self.btn_toggle_annot.setCheckable(True)
+        self.btn_toggle_annot.setFixedHeight(28)
+        self.btn_toggle_annot.setStyleSheet("""
+            QPushButton {
+                background-color: #2b303c;
+                color: #c0c0c0;
+                border: 1px solid #484e5e;
+                border-radius: 4px;
+                padding: 2px 10px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:checked {
+                background-color: #007acc;
+                color: #ffffff;
+                border: 1px solid #0098ff;
+            }
+        """)
+        self.btn_toggle_annot.toggled.connect(self.on_toggle_annotation_mode)
+        ann_layout.addWidget(self.btn_toggle_annot)
+
+        ann_lbl = QLabel("결함:")
+        ann_lbl.setStyleSheet("font-size: 11px; color: #a0a0a0; font-weight: bold;")
+        ann_layout.addWidget(ann_lbl)
+
+        self.combo_annot_class = QComboBox()
+        self.combo_annot_class.addItems(["TSD", "TED", "BPD", "Particle"])
+        self.combo_annot_class.setCurrentText("TSD")
+        self.combo_annot_class.setFixedHeight(28)
+        self.combo_annot_class.setFixedWidth(85)
+        self.combo_annot_class.currentTextChanged.connect(self.on_annotation_class_changed)
+        ann_layout.addWidget(self.combo_annot_class)
+
+        self.lbl_annot_hint = QLabel("💡 캔버스 좌클릭 = 결함 생성 | 우클릭 = 메뉴/삭제")
+        self.lbl_annot_hint.setStyleSheet("color: #8890a0; font-size: 11px;")
+        ann_layout.addWidget(self.lbl_annot_hint)
+
+        ann_layout.addStretch(1)
+
+        self.btn_save_annotations = QPushButton("💾 수동 라벨 저장 (.json)")
+        self.btn_save_annotations.setFixedHeight(28)
+        self.btn_save_annotations.setStyleSheet("""
+            QPushButton {
+                background-color: #2e7d32;
+                color: white;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 2px 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #388e3c;
+            }
+        """)
+        self.btn_save_annotations.clicked.connect(self.save_manual_annotations)
+        ann_layout.addWidget(self.btn_save_annotations)
+
+        left_layout.addWidget(self.annotation_bar)
 
         # Graphics Canvas
         self.canvas = WaferCanvasView()
+        self.canvas.defect_added.connect(self.on_defect_added_manually)
+        self.canvas.defect_delete_requested.connect(self.on_defect_delete_requested)
+        self.canvas.save_requested.connect(self.save_manual_annotations)
         left_layout.addWidget(self.canvas, stretch=1)
 
         # Bottom Controls Frame
@@ -3935,6 +4105,160 @@ class SiCDefectMainWindow(QMainWindow):
         badge = '<span style="background-color: #3a181c; color: #ff5252; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● ERROR</span> '
         self.lbl_status.setText(badge + self.tr("status_failed"))
         QMessageBox.critical(self, self.tr("infer_error_title"), self.tr("infer_error_msg", e=err_msg))
+
+    # --------------------------------------------------------------------------
+    # Manual In-GUI Annotation
+    # --------------------------------------------------------------------------
+
+    def on_toggle_annotation_mode(self, enabled: bool):
+        """Toggles manual annotation drawing mode on the canvas."""
+        self.canvas.annotation_mode = enabled
+        if enabled:
+            self.btn_toggle_annot.setText("✏️ 수동 라벨링 모드: ON")
+            self.canvas.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self.canvas.setCursor(Qt.CursorShape.CrossCursor)
+            badge = '<span style="background-color: #1b3d2f; color: #4caf50; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● ANNOTATING</span> '
+            self.lbl_status.setText(badge + f"수동 라벨링 모드 활성화: 원하는 결함({self.canvas.annotation_class}) 위치를 마우스 좌클릭하세요.")
+        else:
+            self.btn_toggle_annot.setText("✏️ 수동 라벨링 모드: OFF")
+            self.canvas.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+            self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
+            badge = '<span style="background-color: #1b263b; color: #00bcd4; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● READY</span> '
+            self.lbl_status.setText(badge + self.tr("status_ready"))
+
+    def on_annotation_class_changed(self, class_name: str):
+        """Updates active class for manual labeling."""
+        self.canvas.annotation_class = class_name
+        if self.canvas.annotation_mode:
+            badge = '<span style="background-color: #1b3d2f; color: #4caf50; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● ANNOTATING</span> '
+            self.lbl_status.setText(badge + f"수동 라벨링 선택: {class_name}")
+
+    def on_defect_added_manually(self, defect: Dict[str, Any]):
+        """Inserts a manually labeled defect and updates UI immediately."""
+        new_id = len(self.current_defects) + 1
+        defect["defect_id"] = new_id
+        self.current_defects.append(defect)
+
+        # Refresh canvas boxes
+        self.canvas.add_defect_boxes(self.current_defects)
+
+        # Update stats count cards & overview table
+        self._update_all_defect_views()
+
+        cname = defect["class_name"]
+        cx, cy = defect["center_xy"]
+        badge = '<span style="background-color: #1b3d2f; color: #4caf50; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● ADDED</span> '
+        self.lbl_status.setText(badge + f"수동 결함 추가됨: {cname} #{new_id} ({cx:.1f}, {cy:.1f})")
+
+    def on_defect_delete_requested(self, x: float, y: float):
+        """Finds and deletes the defect closest to the clicked coordinate."""
+        if not self.current_defects:
+            return
+
+        best_idx = -1
+        best_dist = 60.0  # 60 pixel radius search
+        for idx, d in enumerate(self.current_defects):
+            cx, cy = d.get("center_xy", [0.0, 0.0])
+            dist = float(np.hypot(x - cx, y - cy))
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = idx
+
+        if best_idx >= 0:
+            removed = self.current_defects.pop(best_idx)
+            # Re-index
+            for i, d in enumerate(self.current_defects, 1):
+                d["defect_id"] = i
+
+            self.canvas.add_defect_boxes(self.current_defects)
+            self._update_all_defect_views()
+
+            badge = '<span style="background-color: #3d1b1b; color: #ff5252; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● DELETED</span> '
+            self.lbl_status.setText(badge + f"결함 삭제됨: {removed.get('class_name')} #{removed.get('defect_id')}")
+        else:
+            QMessageBox.information(self, "결함 삭제", "클릭한 위치 근처(60px 이내)에 삭제할 결함이 없습니다.")
+
+    def _update_all_defect_views(self):
+        """Updates summary tables and counts after defect add/delete."""
+        counts = {name: 0 for name in CLASS_NAMES.values()}
+        for d in self.current_defects:
+            cname = d.get("class_name", "")
+            if cname in counts:
+                counts[cname] += 1
+
+        bpd_cnt = counts.get("BPD", 0)
+        ted_cnt = counts.get("TED", 0)
+        tsd_cnt = counts.get("TSD", 0)
+        particle_cnt = counts.get("Particle", 0)
+        crystal_subtotal = bpd_cnt + ted_cnt + tsd_cnt
+        grand_total = crystal_subtotal + particle_cnt
+
+        if hasattr(self, "table_summary"):
+            self.table_summary.item(0, 1).setText(str(bpd_cnt))
+            self.table_summary.item(1, 1).setText(str(ted_cnt))
+            self.table_summary.item(2, 1).setText(str(tsd_cnt))
+            self.table_summary.item(3, 1).setText(str(crystal_subtotal))
+            self.table_summary.item(4, 1).setText(str(particle_cnt))
+            self.table_summary.item(5, 1).setText(str(grand_total))
+
+        self.bpd_defects = [d for d in self.current_defects if d.get("class_name") == "BPD"]
+        self.tsd_defects = [d for d in self.current_defects if d.get("class_name") == "TSD"]
+        self.ted_defects = [d for d in self.current_defects if d.get("class_name") == "TED"]
+
+        if hasattr(self, "update_analysis_ui"):
+            self.update_analysis_ui()
+        if hasattr(self, "update_grid_stats"):
+            self.update_grid_stats(self.current_defects)
+
+    def save_manual_annotations(self):
+        """Saves current defects (including all manual additions) to <image>.json."""
+        if not self.current_file_path:
+            QMessageBox.warning(self, "경고", "열려있는 이미지가 없습니다.")
+            return
+
+        import time
+        img_p = Path(self.current_file_path)
+        json_p = img_p.with_suffix(".json")
+
+        h, w = (0, 0)
+        if self.current_slice_2d is not None:
+            h, w = self.current_slice_2d.shape[:2]
+
+        counts = {name: 0 for name in CLASS_NAMES.values()}
+        for d in self.current_defects:
+            cname = d.get("class_name", "")
+            if cname in counts:
+                counts[cname] += 1
+
+        payload = {
+            "image": img_p.name,
+            "image_shape": [h, w],
+            "total_defects": len(self.current_defects),
+            "counts": counts,
+            "defects": self.current_defects,
+            "is_manual_ground_truth": True,
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+        with open(json_p, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
+        # Also write copy to data/raw/ if image is in data/raw
+        raw_target = Path("data/raw") / json_p.name
+        try:
+            with open(raw_target, "w", encoding="utf-8") as f2:
+                json.dump(payload, f2, indent=2)
+        except Exception:
+            pass
+
+        QMessageBox.information(
+            self,
+            "라벨 저장 완료",
+            f"성공적으로 정답 라벨이 저장되었습니다!\n\n"
+            f"• 저장 파일: {json_p.name}\n"
+            f"• 총 결함 수: {len(self.current_defects)}개 (BPD: {counts.get('BPD', 0)}, TED: {counts.get('TED', 0)}, TSD: {counts.get('TSD', 0)})\n\n"
+            f"이제 터미널에서 'python main.py --mode dataset'을 실행하면 수동 추가된 정답이 즉시 학습 데이터셋에 반영됩니다."
+        )
 
     # --------------------------------------------------------------------------
     # Report Exporting

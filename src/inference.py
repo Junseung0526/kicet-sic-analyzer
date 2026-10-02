@@ -552,7 +552,8 @@ class WaferInferenceEngine:
 
             boxes_arr = np.array([d["box"] for d in class_dets], dtype=np.float32)
             scores_arr = np.array([d["conf"] for d in class_dets], dtype=np.float32)
-            keep_indices = nms_boxes(boxes_arr, scores_arr, iou_threshold=self.iou_threshold)
+            class_iou = max(0.65, self.iou_threshold) if class_name in ("TSD", "TED") else self.iou_threshold
+            keep_indices = nms_boxes(boxes_arr, scores_arr, iou_threshold=class_iou)
 
             for kidx in keep_indices:
                 d = class_dets[kidx]
@@ -714,7 +715,8 @@ class OnnxWaferInferenceEngine:
             c_boxes = boxes[c_mask]
             c_scores = confidences[c_mask]
 
-            keep = nms_boxes(c_boxes, c_scores, iou_threshold=self.iou_threshold)
+            patch_iou = max(0.65, self.iou_threshold) if int(cid) in (1, 2) else self.iou_threshold
+            keep = nms_boxes(c_boxes, c_scores, iou_threshold=patch_iou)
             for k in keep:
                 kb = c_boxes[k]
                 detections.append(
@@ -780,7 +782,8 @@ class OnnxWaferInferenceEngine:
 
             boxes_arr = np.array([d["box"] for d in class_dets], dtype=np.float32)
             scores_arr = np.array([d["conf"] for d in class_dets], dtype=np.float32)
-            keep_indices = nms_boxes(boxes_arr, scores_arr, iou_threshold=self.iou_threshold)
+            class_iou = max(0.65, self.iou_threshold) if class_name in ("TSD", "TED") else self.iou_threshold
+            keep_indices = nms_boxes(boxes_arr, scores_arr, iou_threshold=class_iou)
 
             for kidx in keep_indices:
                 d = class_dets[kidx]
