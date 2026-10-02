@@ -2592,7 +2592,7 @@ class SiCDefectMainWindow(QMainWindow):
         self.spin_conf_tsd = QDoubleSpinBox()
         self.spin_conf_tsd.setRange(0.01, 1.00)
         self.spin_conf_tsd.setSingleStep(0.01)
-        self.spin_conf_tsd.setValue(0.38)
+        self.spin_conf_tsd.setValue(0.18)
         self.spin_conf_tsd.setFixedWidth(65)
 
         self.lbl_conf_bpd = QLabel("BPD Conf:")
@@ -2610,6 +2610,32 @@ class SiCDefectMainWindow(QMainWindow):
         conf_grid.addWidget(self.spin_conf_bpd, 1, 1)
         detect_layout.addLayout(conf_grid)
 
+        # Quick Presets for Detection Sensitivity
+        preset_layout = QHBoxLayout()
+        preset_layout.setSpacing(4)
+        lbl_presets = QLabel("감도 프리셋:")
+        lbl_presets.setStyleSheet("font-size: 11px; color: #8fa0b5;")
+        preset_layout.addWidget(lbl_presets)
+
+        btn_preset_high = QPushButton("⚡ 고감도 (추천)")
+        btn_preset_high.setToolTip("TSD 0.14, TED 0.14 - 육안으로 보이는 미세 결함까지 전수 자동 검출")
+        btn_preset_high.setStyleSheet("font-size: 10px; padding: 2px 6px; background-color: #1b3d2f; color: #4caf50; border: 1px solid #2e7d32; border-radius: 3px;")
+        btn_preset_high.clicked.connect(lambda: self.apply_conf_preset(0.14, 0.14, 0.03))
+        preset_layout.addWidget(btn_preset_high)
+
+        btn_preset_bal = QPushButton("⚖️ 균형")
+        btn_preset_bal.setToolTip("TSD 0.18, TED 0.18 - 검출율과 오탐 억제의 표준 균형")
+        btn_preset_bal.setStyleSheet("font-size: 10px; padding: 2px 6px; background-color: #1b263b; color: #00bcd4; border: 1px solid #0288d1; border-radius: 3px;")
+        btn_preset_bal.clicked.connect(lambda: self.apply_conf_preset(0.18, 0.18, 0.04))
+        preset_layout.addWidget(btn_preset_bal)
+
+        btn_preset_prec = QPushButton("🎯 고정밀")
+        btn_preset_prec.setToolTip("TSD 0.35, TED 0.25 - 오탐을 강하게 배제")
+        btn_preset_prec.setStyleSheet("font-size: 10px; padding: 2px 6px; background-color: #2b2b36; color: #b0bec5; border: 1px solid #546e7a; border-radius: 3px;")
+        btn_preset_prec.clicked.connect(lambda: self.apply_conf_preset(0.25, 0.35, 0.06))
+        preset_layout.addWidget(btn_preset_prec)
+        detect_layout.addLayout(preset_layout)
+
         # 3. Geometric Post-Processing (TED ↔ TSD)
         self.chk_refine_geometry = QCheckBox("TED ↔ TSD Geometric Post-processing")
         self.chk_refine_geometry.setChecked(True)
@@ -2623,7 +2649,7 @@ class SiCDefectMainWindow(QMainWindow):
         self.spin_tsd_min_area = QSpinBox()
         self.spin_tsd_min_area.setRange(50, 2000)
         self.spin_tsd_min_area.setSingleStep(10)
-        self.spin_tsd_min_area.setValue(280)
+        self.spin_tsd_min_area.setValue(160)
         self.spin_tsd_min_area.setSuffix(" px²")
         self.spin_tsd_min_area.setFixedWidth(85)
 
@@ -3972,6 +3998,15 @@ class SiCDefectMainWindow(QMainWindow):
         """Legacy compatibility wrapper calling render_fullres_image."""
         self.render_fullres_image()
 
+    def apply_conf_preset(self, ted: float, tsd: float, bpd: float):
+        """Applies preset sensitivity thresholds to spin boxes."""
+        if hasattr(self, "spin_conf_ted"):
+            self.spin_conf_ted.setValue(ted)
+        if hasattr(self, "spin_conf_tsd"):
+            self.spin_conf_tsd.setValue(tsd)
+        if hasattr(self, "spin_conf_bpd"):
+            self.spin_conf_bpd.setValue(bpd)
+
     # --------------------------------------------------------------------------
     # Inference Pipeline
     # --------------------------------------------------------------------------
@@ -4000,7 +4035,7 @@ class SiCDefectMainWindow(QMainWindow):
         class_confs = {
             "BPD": float(self.spin_conf_bpd.value()) if hasattr(self, "spin_conf_bpd") else 0.04,
             "TED": float(self.spin_conf_ted.value()) if hasattr(self, "spin_conf_ted") else 0.18,
-            "TSD": float(self.spin_conf_tsd.value()) if hasattr(self, "spin_conf_tsd") else 0.38,
+            "TSD": float(self.spin_conf_tsd.value()) if hasattr(self, "spin_conf_tsd") else 0.18,
             "Particle": 0.25,
         }
         enhance_contrast = self.chk_enhance_contrast.isChecked() if hasattr(self, "chk_enhance_contrast") else True

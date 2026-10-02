@@ -41,21 +41,21 @@ from src.preprocess import (
 
 # Per-Class Dynamic Confidence Thresholds
 # Dislocation lines (BPD): subtle X-ray diffraction contrast, lower cutoff (0.04) prevents missed detections
-# Threading Edge Dislocation (TED): small pinpoint core, 0.18 (0.15~0.20) minimizes False Negatives (FN)
-# Threading Screw Dislocation (TSD): broad strain field & halo, 0.38 (0.35~0.40) suppresses False Positives (FP)
+# Threading Edge Dislocation (TED): small pinpoint core, 0.18 (0.14~0.18) minimizes False Negatives (FN)
+# Threading Screw Dislocation (TSD): broad strain field & halo, 0.18 (balanced with TED to eliminate false dismissals)
 # Surface Particles: distinct contrast anomaly, 0.25
 DEFAULT_CLASS_CONF_THRESHOLDS: Dict[str, float] = {
     "BPD": 0.04,
     "TED": 0.18,
-    "TSD": 0.38,
+    "TSD": 0.18,
     "Particle": 0.25,
 }
 
 # Geometric & Morphology Thresholds for TED vs TSD Post-Processing Correction
-# TSD typically has a large lattice strain field and wide diffraction core (area > 280 px^2, diameter > 18 px)
-# TED is a pinpoint defect with localized displacement (area < 280 px^2, diameter < 18 px)
-TSD_MIN_AREA_THRESHOLD: float = 280.0         # TSD smaller than this is reclassified to TED if not near BPD
-TSD_MIN_EQUIV_DIAMETER: float = 18.0         # Equivalent circle diameter in pixels
+# TSD typically has a large lattice strain field and wide diffraction core (area > 160 px^2, diameter > 14 px)
+# TED is a pinpoint defect with localized displacement (area < 160 px^2, diameter < 14 px)
+TSD_MIN_AREA_THRESHOLD: float = 160.0         # TSD smaller than this is reclassified to TED if not near BPD
+TSD_MIN_EQUIV_DIAMETER: float = 14.0         # Equivalent circle diameter in pixels
 TED_MAX_AREA_THRESHOLD: float = 480.0         # TED larger than this with strong contrast depth is corrected to TSD
 TED_MAX_EQUIV_DIAMETER: float = 24.0         # Equivalent circle diameter in pixels
 TED_TSD_CONTRAST_DEPTH_THRESH: float = 35.0  # Peak-to-valley contrast depth within bounding box
