@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import subprocess
 import sys
 from typing import Optional
 
-from src.dataset import build_yolo_dataset, create_yolo_yaml
+from src.dataset import build_yolo_dataset, create_yolo_yaml, generate_pseudo_labels_and_dataset
 from src.gui import launch_gui
 from src.inference import WaferInferenceEngine, export_defect_reports, visualize_wafer_defects
 from src.preprocess import (
@@ -142,6 +143,8 @@ def run_training(
     imgsz: int = 640,
     device: Optional[str] = None,
     weights: str = "yolov8n.pt",
+    name: str = "sic_defect_train",
+    note: str = "",
 ) -> dict:
     """Runs YOLO training and exports best checkpoint to ONNX."""
     print(f"\n[Step: YOLO Training & ONNX Export]")
@@ -152,12 +155,118 @@ def run_training(
         batch_size=batch_size,
         imgsz=imgsz,
         device=device,
+        name=name,
+        note=note,
         export_onnx=True,
     )
     print(f"Training completed:")
     print(f"  - Best weights: {summary.get('best_pt')}")
     print(f"  - ONNX model:   {summary.get('best_onnx')}")
+    if summary.get("isolated_onnx"):
+        print(f"  - Isolated Deployment Weights: {summary.get('isolated_onnx')}")
     return summary
+
+
+def run_pseudo_labeling(
+    raw_dir: Path,
+    dataset_dir: Path,
+    model_path: Optional[str] = None,
+    patch_size: int = 640,
+    overlap: float = 0.2,
+    overwrite: bool = False,
+    device: Optional[str] = None,
+) -> tuple[Path, dict]:
+    """Generates pseudo labels for unannotated raw images and builds YOLO dataset."""
+    print(f"\n[Step: Automated Pseudo-Labeling & Dataset Generation]")
+    yaml_path, stats = generate_pseudo_labels_and_dataset(
+        raw_dir=raw_dir,
+        output_dir=dataset_dir,
+        model_path=model_path,
+        patch_size=patch_size,
+        overlap=overlap,
+        overwrite_existing_json=overwrite,
+        device=device,
+    )
+    print(f"\nPseudo-labeling and dataset preparation complete:")
+    print(f"  - Dataset YAML:       {yaml_path}")
+    print(f"  - Labeled raw images: {stats.get('pseudo_labeled_images', 0)}")
+    print(f"  - Total kept patches: {stats.get('total_patches', 0)}")
+    print(f"  - Train samples:      {stats.get('train_samples', 0)}")
+    print(f"  - Val samples:        {stats.get('val_samples', 0)}")
+    return yaml_path, stats
+
+
+def run_release(
+    tag: str,
+    model_path: Optional[str] = None,
+    note: str = "",
+    project_root: Optional[Path] = None,
+):
+    """Packages and Git-tags a validated model for version release."""
+    root = project_root or Path(__file__).resolve().parent
+    print(f"\n[Step: Model Git Release & Tagging]")
+    print(f"Target Release Tag: {tag}")
+    if note:
+        print(f"Release Notes:      {note}")
+
+    # Check model file if specified
+    if model_path:
+        mp = Path(model_path)
+        if not mp.is_absolute():
+            mp = root / mp
+        if not mp.exists():
+            print(f"[Error] Specified model not found: {mp}")
+            return
+        size_mb = mp.stat().st_size / (1024 * 1024)
+        print(f"Model File:         {mp.name} ({size_mb:.2f} MB)")
+        if size_mb > 100:
+            print(f"[Warning] Model size ({size_mb:.2f} MB) exceeds GitHub 100MB limit. Consider git-lfs.")
+        elif size_mb > 50:
+            print(f"[Notice] Model size ({size_mb:.2f} MB) triggers GitHub 50MB warning, but is allowed.")
+        else:
+            print(f"[OK] Model size is well within GitHub limits (<50MB). Safe for standard Git commit.")
+
+    # Git status check
+    try:
+        subprocess.run(["git", "status", "--short"], cwd=root, check=True)
+    except Exception as e:
+        print(f"[Error] Git is not accessible: {e}")
+        return
+
+    # Stage files: models/, runs/experiments.csv, runs/EXPERIMENTS.md
+    print("\nStaging model artifacts and experiment registries...")
+    subprocess.run(["git", "add", "models/", "runs/experiments.csv", "runs/EXPERIMENTS.md"], cwd=root)
+
+    # Commit if changes exist
+    status_proc = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True)
+    if status_proc.stdout.strip():
+        commit_msg = f"release: {tag} - {note or 'Fine-tuned model weights and registry'}"
+        print(f"Committing changes: {commit_msg}")
+        subprocess.run(["git", "commit", "-m", commit_msg], cwd=root)
+    else:
+        print("Working tree clean for staged artifacts.")
+
+    # Create Git tag
+    tag_msg = note or f"SiC Defect AI Model Release {tag}"
+    print(f"Creating annotated Git tag '{tag}'...")
+    res = subprocess.run(["git", "tag", "-a", tag, "-m", tag_msg], cwd=root, capture_output=True, text=True)
+    if res.returncode != 0:
+        if "already exists" in res.stderr:
+            print(f"[Warning] Git tag '{tag}' already exists. To overwrite, delete it first or choose a new tag name.")
+        else:
+            print(f"[Error] Failed to create tag: {res.stderr.strip()}")
+            return
+    else:
+        print(f"Tag '{tag}' created successfully!")
+
+    print("\n=======================================================")
+    print(">>> MODEL RELEASE COMPLETED SUCCESSFULLY <<<")
+    print("To push this release and tag to GitHub, run:")
+    print(f"   git push origin main")
+    print(f"   git push origin {tag}")
+    print("Or to push all tags:")
+    print(f"   git push origin --tags")
+    print("=======================================================\n")
 
 
 def run_inference_pipeline(
@@ -210,7 +319,7 @@ def main():
     parser = argparse.ArgumentParser(description="SiC Wafer Defect Detection & Classification Pipeline")
     parser.add_argument(
         "--mode",
-        choices=["all", "gui", "mock", "import", "preprocess", "dataset", "train", "infer"],
+        choices=["all", "gui", "mock", "import", "preprocess", "dataset", "pseudo-label", "train", "infer", "release"],
         default="all",
         help="Pipeline mode to execute (default: 'all' for dry-run verification)",
     )
@@ -230,7 +339,11 @@ def main():
     parser.add_argument("--weights", type=str, default="yolov8n.pt", help="Base model weights")
     parser.add_argument("--conf", type=float, default=0.25, help="Inference confidence threshold")
     parser.add_argument("--test-image", type=str, default=None, help="Custom image path for inference")
-    parser.add_argument("--model-path", type=str, default=None, help="Trained model path for inference")
+    parser.add_argument("--model-path", type=str, default=None, help="Trained model path for inference / pseudo-labeling / release")
+    parser.add_argument("--name", type=str, default="sic_defect_train", help="Experiment name (e.g. 'exp_jpg_v1')")
+    parser.add_argument("--note", type=str, default="", help="Experiment or release notes description")
+    parser.add_argument("--tag", type=str, default="v1.1-jpg-exp", help="Git tag for release mode")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing pseudo-label JSONs")
 
     args = parser.parse_args()
 
@@ -287,6 +400,18 @@ def main():
         run_prepare_dataset(raw_dir, dataset_dir, patch_size=args.imgsz)
         return
 
+    # Mode 3.5: Automated Pseudo-labeling
+    if args.mode == "pseudo-label":
+        run_pseudo_labeling(
+            raw_dir=raw_dir,
+            dataset_dir=dataset_dir,
+            model_path=args.model_path,
+            patch_size=args.imgsz,
+            overwrite=args.overwrite,
+            device=args.device,
+        )
+        return
+
     # Mode 4: Train model
     if args.mode == "train":
         yaml_path = dataset_dir / "sic_defect.yaml"
@@ -302,6 +427,8 @@ def main():
             imgsz=args.imgsz,
             device=args.device,
             weights=args.weights,
+            name=args.name,
+            note=args.note,
         )
         return
 
@@ -327,6 +454,16 @@ def main():
             patch_size=args.imgsz,
             conf_thresh=args.conf,
             device=args.device,
+        )
+        return
+
+    # Mode 7: Model Git Release
+    if args.mode == "release":
+        run_release(
+            tag=args.tag,
+            model_path=args.model_path,
+            note=args.note,
+            project_root=project_root,
         )
         return
 

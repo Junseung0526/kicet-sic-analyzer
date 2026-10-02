@@ -121,8 +121,9 @@ TRANSLATIONS = {
         "btn_open": "📂 이미지 열기 (.tif, .jpg, .png 등)",
         "no_image": "불러온 이미지 없음",
         "file_info": "파일명: {name}\n크기: {w} x {h} px\n타입: {dtype} (범위: [{min_val:.0f}, {max_val:.0f}])",
-        "model_info": "모델: {name}",
-        "btn_change_model": "가중치 선택",
+        "model_info": "현재 활성 모델: {name}",
+        "lbl_model_select": "가중치 모델 선택 (A/B 테스트):",
+        "btn_change_model": "📂 파일 찾기",
         "grp_detect_settings": "결함 탐지 및 전처리 설정",
         "chk_enhance_contrast": "TED 미세 대비 강화 (Bilateral + CLAHE)",
         "lbl_clahe_clip": "대비 제한 (Clip Limit):",
@@ -273,8 +274,9 @@ TRANSLATIONS = {
         "btn_open": "📂 Open Image (.tif, .jpg, .png, etc.)",
         "no_image": "No image loaded",
         "file_info": "File: {name}\nSize: {w} x {h} px\nType: {dtype} (Range: [{min_val:.0f}, {max_val:.0f}])",
-        "model_info": "Model: {name}",
-        "btn_change_model": "Select Weights",
+        "model_info": "Active: {name}",
+        "lbl_model_select": "Model Weights (A/B Test):",
+        "btn_change_model": "📂 Browse...",
         "grp_detect_settings": "Detection & Preprocessing Settings",
         "chk_enhance_contrast": "Enhance TED Contrast (Bilateral + CLAHE)",
         "lbl_clahe_clip": "Clip Limit:",
@@ -1926,8 +1928,10 @@ class SiCDefectMainWindow(QMainWindow):
         self.retranslate_ui()
 
     def locate_default_model(self) -> Path:
-        """Locates best.onnx or best.pt across standard project paths."""
+        """Locates baseline models/best_2d_base.onnx or fallback models across project paths."""
         candidates = [
+            Path("models") / "best_2d_base.onnx",
+            Path("models") / "best_2d_base.pt",
             Path("best.onnx"),
             Path("runs") / "detect" / "runs" / "train" / "sic_defect_train" / "weights" / "best.onnx",
             Path("runs") / "detect" / "runs" / "train" / "sic_defect_train" / "weights" / "best.pt",
@@ -1941,6 +1945,62 @@ class SiCDefectMainWindow(QMainWindow):
             if c.exists():
                 return c.resolve()
         return (Path("best.onnx")).resolve()
+
+    def get_available_models(self) -> List[Path]:
+        """Scans models/ and workspace root for available ONNX and PyTorch checkpoints."""
+        found: List[Path] = []
+        models_dir = Path("models")
+        if models_dir.exists():
+            found.extend(models_dir.glob("*.onnx"))
+            found.extend(models_dir.glob("*.pt"))
+        for pattern in ("*.onnx", "*.pt"):
+            found.extend(Path.cwd().glob(pattern))
+
+        unique: Dict[str, Path] = {}
+        for p in found:
+            unique[str(p.resolve())] = p
+
+        def sort_key(p: Path):
+            if "best_2d_base" in p.name:
+                return (0, p.name)
+            if "best.onnx" in p.name:
+                return (1, p.name)
+            return (2, p.name)
+
+        return sorted(list(unique.values()), key=sort_key)
+
+    def refresh_available_models(self):
+        """Populates model dropdown combo box with all discovered checkpoints."""
+        if not hasattr(self, "combo_model"):
+            return
+        models = self.get_available_models()
+        self._model_registry = {m.name: m for m in models}
+
+        if self.model_path.name not in self._model_registry:
+            self._model_registry[self.model_path.name] = self.model_path
+
+        self.combo_model.blockSignals(True)
+        self.combo_model.clear()
+        for name in self._model_registry.keys():
+            self.combo_model.addItem(name)
+
+        if self.model_path.name in self._model_registry:
+            self.combo_model.setCurrentText(self.model_path.name)
+        elif self.combo_model.count() > 0:
+            self.combo_model.setCurrentIndex(0)
+            self.model_path = self._model_registry[self.combo_model.currentText()]
+        self.combo_model.blockSignals(False)
+
+        if hasattr(self, "lbl_model_info"):
+            self.lbl_model_info.setText(self.tr("model_info", name=self.model_path.name))
+
+    def on_model_combo_changed(self, idx: int):
+        """Switches active weights when selected from dropdown."""
+        cur_name = self.combo_model.currentText()
+        if hasattr(self, "_model_registry") and cur_name in self._model_registry:
+            self.model_path = self._model_registry[cur_name]
+            if hasattr(self, "lbl_model_info"):
+                self.lbl_model_info.setText(self.tr("model_info", name=self.model_path.name))
 
     def create_vsep(self) -> QFrame:
         """Creates vertical separator line."""
@@ -2294,15 +2354,30 @@ class SiCDefectMainWindow(QMainWindow):
         self.lbl_file_info.setWordWrap(True)
         grp_file_layout.addWidget(self.lbl_file_info)
 
-        # Model label & select
+        # Model Selection: Dropdown for Quick A/B Switching + Browse Button
+        model_vbox = QVBoxLayout()
+        self.lbl_model_select = QLabel(self.tr("lbl_model_select"))
+        self.lbl_model_select.setStyleSheet("font-weight: bold; font-size: 11px; margin-top: 4px;")
+        model_vbox.addWidget(self.lbl_model_select)
+
         model_hbox = QHBoxLayout()
-        self.lbl_model_info = QLabel(f"Model: {self.model_path.name}")
-        self.lbl_model_info.setWordWrap(True)
-        self.btn_change_model = QPushButton("Select Weights")
+        self.combo_model = QComboBox()
+        self.combo_model.setFixedHeight(30)
+        self.combo_model.currentIndexChanged.connect(self.on_model_combo_changed)
+        model_hbox.addWidget(self.combo_model, stretch=1)
+
+        self.btn_change_model = QPushButton(self.tr("btn_change_model"))
+        self.btn_change_model.setFixedHeight(30)
         self.btn_change_model.clicked.connect(self.on_select_model)
-        model_hbox.addWidget(self.lbl_model_info, stretch=1)
         model_hbox.addWidget(self.btn_change_model)
-        grp_file_layout.addLayout(model_hbox)
+        model_vbox.addLayout(model_hbox)
+
+        self.lbl_model_info = QLabel(self.tr("model_info", name=self.model_path.name))
+        self.lbl_model_info.setStyleSheet("color: #00e5ff; font-size: 11px;")
+        model_vbox.addWidget(self.lbl_model_info)
+
+        grp_file_layout.addLayout(model_vbox)
+        self.refresh_available_models()
 
         tab_layout.addWidget(self.grp_file)
 
@@ -3508,11 +3583,13 @@ class SiCDefectMainWindow(QMainWindow):
         file_str, _ = QFileDialog.getOpenFileName(
             self,
             self.tr("dialog_select_model"),
-            str(self.model_path.parent if self.model_path.exists() else Path.cwd()),
+            str(self.model_path.parent if self.model_path.exists() else Path("models")),
             "ONNX / YOLO Models (*.onnx *.pt);;ONNX Models (*.onnx);;PyTorch Models (*.pt);;All Files (*.*)",
         )
         if file_str:
             self.model_path = Path(file_str)
+            self.refresh_available_models()
+            self.combo_model.setCurrentText(self.model_path.name)
             self.lbl_model_info.setText(self.tr("model_info", name=self.model_path.name))
 
     def load_image(self, file_path: Path):
@@ -3887,6 +3964,8 @@ class SiCDefectMainWindow(QMainWindow):
         if save_path.suffix.lower() == ".json":
             out_data = dict(self.last_results)
             out_data["conversion_stats"] = self.conversion_stats
+            out_data["model_name"] = self.model_path.name
+            out_data["model_path"] = str(self.model_path)
             with open(save_path, "w", encoding="utf-8") as f:
                 json.dump(out_data, f, indent=2)
         else:
@@ -3915,6 +3994,7 @@ class SiCDefectMainWindow(QMainWindow):
                     "TSD_Angle_Label",
                     "Reclassified_From",
                     "Reclassify_Reason",
+                    "Model_Name",
                 ])
                 for d in defects:
                     ang = d.get("angle_deg", "N/A")
@@ -3948,6 +4028,7 @@ class SiCDefectMainWindow(QMainWindow):
                         tsd_lbl,
                         d.get("reclassified_from", ""),
                         d.get("reclassify_reason", ""),
+                        self.model_path.name,
                     ])
 
         QMessageBox.information(self, self.tr("export_success_title"), self.tr("export_success_msg", path=save_path))

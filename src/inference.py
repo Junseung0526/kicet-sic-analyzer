@@ -849,6 +849,8 @@ def get_inference_engine(
     """
     # Candidate search paths if model_path is None or not existing
     default_candidates = [
+        Path("models/best_2d_base.onnx"),
+        Path("models/best_2d_base.pt"),
         Path("best.onnx"),
         Path("runs/detect/runs/train/sic_defect_train/weights/best.onnx"),
         Path("runs/detect/runs/train/sic_defect_train/weights/best.pt"),
@@ -1491,7 +1493,9 @@ def export_defect_reports(
             "TSD_Angle_Label",
             "Reclassified_From",
             "Reclassify_Reason",
+            "Model_Name",
         ])
+        model_name = results.get("model_name", "best_2d_base.onnx")
         for d in defects:
             ang = d.get("angle_deg", "N/A")
             ang_lbl = d.get("angle_label", "N/A")
@@ -1523,6 +1527,7 @@ def export_defect_reports(
                 tsd_lbl,
                 d.get("reclassified_from", ""),
                 d.get("reclassify_reason", ""),
+                model_name,
             ])
 
     print(f"[Report] Defect reports exported to:")

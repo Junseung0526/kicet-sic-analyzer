@@ -27,10 +27,19 @@ wheels/
 .installed.cfg
 *.egg
 
-# PyTorch & YOLO
+# PyTorch & YOLO temporary checkpoints and runs
 *.pt
-runs/
 *.onnx
+runs/*
+!runs/experiments.csv
+!runs/EXPERIMENTS.md
+
+# Curated Deployment Models in models/
+!models/
+!models/*.onnx
+!models/*.pt
+!models/*.json
+!models/*.md
 
 # Data directory (keep raw, dataset structure but ignore heavy generated images)
 data/sliced/*

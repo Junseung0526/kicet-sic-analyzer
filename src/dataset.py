@@ -252,3 +252,157 @@ def build_yolo_dataset(
     }
 
     return yaml_path, stats
+
+
+def generate_pseudo_labels_and_dataset(
+    raw_dir: Union[str, Path] = "data/raw",
+    model_path: Optional[Union[str, Path]] = None,
+    output_dir: Union[str, Path] = "data/dataset",
+    patch_size: int = 640,
+    overlap: float = 0.2,
+    conf_threshold: float = 0.15,
+    class_conf_thresholds: Optional[Dict[str, float]] = None,
+    overwrite_existing_json: bool = False,
+    val_ratio: float = 0.2,
+    bg_subsample_ratio: float = 0.05,
+    refine_ted_tsd: bool = True,
+    device: Optional[str] = None,
+) -> Tuple[Path, Dict[str, Any]]:
+    """Runs full-wafer inference on unannotated raw images (e.g. JPGs) to generate pseudo-labels,
+
+    and then automatically compiles them into a clean 640x640 YOLO training dataset.
+
+    Args:
+        raw_dir: Directory containing raw wafer images (.jpg, .tif, etc.).
+        model_path: Base weights for pseudo-labeling (defaults to models/best_2d_base.onnx).
+        output_dir: Destination YOLO dataset directory.
+        patch_size: Patch resolution for YOLO training (default: 640).
+        overlap: Sliding-window overlap fraction.
+        conf_threshold: Global confidence cutoff fallback.
+        class_conf_thresholds: Per-class confidence thresholds.
+        overwrite_existing_json: Whether to re-label images that already have a .json file.
+        val_ratio: Validation split fraction.
+        bg_subsample_ratio: Negative background patch subsampling ratio.
+        refine_ted_tsd: Apply size/contrast geometric refinement.
+        device: Target compute device.
+
+    Returns:
+        Tuple of (dataset_yaml_path, statistics_dict).
+    """
+    from src.inference import get_inference_engine
+
+    raw_path = Path(raw_dir)
+    if not raw_path.exists():
+        raise FileNotFoundError(f"Raw image directory not found: {raw_path}")
+
+    # Determine baseline model for inference
+    candidate_models = [
+        Path(model_path) if model_path else None,
+        Path("models/best_2d_base.onnx"),
+        Path("best.onnx"),
+        Path("models/best_2d_base.pt"),
+        Path("best.pt"),
+        Path("yolov8n.pt"),
+    ]
+    chosen_model = next((p for p in candidate_models if p is not None and p.exists()), None)
+    if chosen_model is None:
+        raise FileNotFoundError("No model weights found to generate pseudo-labels.")
+
+    print(f"\n==================================================")
+    print(f"[Pseudo-Labeling] Generating Automated Labels for Unannotated Images")
+    print(f"  - Target Directory: {raw_path}")
+    print(f"  - Generator Model:  {chosen_model}")
+    print(f"  - Output Dataset:   {output_dir}")
+    print(f"==================================================")
+
+    # Initialize inference engine
+    engine = get_inference_engine(
+        model_path=chosen_model,
+        conf_threshold=conf_threshold,
+        class_conf_thresholds=class_conf_thresholds,
+        prefer_onnx=True,
+        device=device,
+    )
+
+    IMAGE_EXTS = ("*.tif", "*.tiff", "*.TIF", "*.TIFF", "*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG", "*.bmp")
+    all_raw_images = set()
+    for ext in IMAGE_EXTS:
+        all_raw_images.update(raw_path.glob(ext))
+    sorted_images = sorted(list(all_raw_images))
+
+    if not sorted_images:
+        raise FileNotFoundError(f"No image files found in {raw_path}")
+
+    labeled_count = 0
+    skipped_count = 0
+    total_pseudo_defects = 0
+
+    for idx, img_file in enumerate(sorted_images, 1):
+        json_file = img_file.with_suffix(".json")
+        if json_file.exists() and not overwrite_existing_json:
+            skipped_count += 1
+            continue
+
+        print(f"[{idx}/{len(sorted_images)}] Pseudo-labeling: {img_file.name}...")
+        raw_img, meta = inspect_and_load_xrt(img_file, slice_idx=0)
+        prep_img = preprocess_xrt_image(raw_img)
+
+        results = engine.predict_full_wafer(
+            image=prep_img,
+            patch_size=patch_size,
+            overlap=overlap,
+            detect_particles=True,
+            refine_ted_tsd=refine_ted_tsd,
+        )
+
+        defects = results.get("defects", [])
+        total_pseudo_defects += len(defects)
+
+        # Standard JSON annotation payload
+        ann_payload = {
+            "image": img_file.name,
+            "image_shape": list(prep_img.shape[:2]),
+            "total_defects": len(defects),
+            "counts": results.get("counts", {}),
+            "defects": [
+                {
+                    "defect_id": d["defect_id"],
+                    "class_id": d["class_id"],
+                    "class_name": d["class_name"],
+                    "confidence": d["confidence"],
+                    "bbox": d["bbox_xyxy"],
+                    "size": d["size"],
+                    "center": d["center_xy"],
+                    "reclassified_from": d.get("reclassified_from", ""),
+                    "pseudo_labeled": True,
+                }
+                for d in defects
+            ],
+            "is_pseudo_label": True,
+            "generator_model": chosen_model.name,
+        }
+
+        with open(json_file, "w", encoding="utf-8") as jf:
+            json.dump(ann_payload, jf, indent=2)
+
+        labeled_count += 1
+        print(f"  -> Generated {len(defects)} pseudo-defects -> {json_file.name}")
+
+    print(f"\n[Pseudo-Labeling Complete] Newly labeled: {labeled_count}, Skipped (existing): {skipped_count}")
+    print(f"  - Total pseudo-defects generated: {total_pseudo_defects}")
+
+    # Build YOLO patches dataset
+    print(f"\n[Dataset] Compiling 640x640 YOLO patches from pseudo-labeled and ground-truth data...")
+    yaml_path, stats = build_yolo_dataset(
+        raw_dir=raw_path,
+        output_dir=output_dir,
+        patch_size=patch_size,
+        overlap=overlap,
+        val_ratio=val_ratio,
+        bg_subsample_ratio=bg_subsample_ratio,
+    )
+    stats["pseudo_labeled_images"] = labeled_count
+    stats["total_pseudo_defects"] = total_pseudo_defects
+    stats["generator_model"] = chosen_model.name
+
+    return yaml_path, stats
