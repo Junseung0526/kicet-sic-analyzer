@@ -179,15 +179,17 @@ def build_yolo_dataset(
             px2 = px1 + patch_size
             py2 = py1 + patch_size
 
-            nearby_defects = [
-                d for d in defects
-                if (px1 - patch_margin <= d["bbox"][2] and d["bbox"][0] <= px2 + patch_margin and
-                    py1 - patch_margin <= d["bbox"][3] and d["bbox"][1] <= py2 + patch_margin)
-            ]
+            nearby_defects = []
+            for d in defects:
+                b = d.get("bbox") or d.get("bbox_xyxy")
+                if b and len(b) == 4:
+                    if (px1 - patch_margin <= b[2] and b[0] <= px2 + patch_margin and
+                        py1 - patch_margin <= b[3] and b[1] <= py2 + patch_margin):
+                        nearby_defects.append((d, b))
 
-            for d in nearby_defects:
+            for d, fbox_list in nearby_defects:
                 class_id = int(d["class_id"])
-                fbox = tuple(d["bbox"])  # (X1, Y1, X2, Y2)
+                fbox = tuple(fbox_list)  # (X1, Y1, X2, Y2)
 
                 local_box = full_to_patch_bbox(fbox, (px1, py1), patch_size=patch_size)
                 if local_box is not None:

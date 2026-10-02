@@ -1683,12 +1683,14 @@ class WaferCanvasView(QGraphicsView):
         by2 = cy + half
 
         cls_id = {"BPD": 0, "TED": 1, "TSD": 2, "Particle": 3}.get(class_name, 2)
+        box_coords = [round(bx1, 1), round(by1, 1), round(bx2, 1), round(by2, 1)]
         defect = {
             "defect_id": 0,
             "class_id": cls_id,
             "class_name": class_name,
             "confidence": 1.0,
-            "bbox_xyxy": [round(bx1, 1), round(by1, 1), round(bx2, 1), round(by2, 1)],
+            "bbox": box_coords,
+            "bbox_xyxy": box_coords,
             "center_xy": [round(cx, 1), round(cy, 1)],
             "size": [round(box_size, 1), round(box_size, 1)],
             "manual": True,
@@ -4224,18 +4226,26 @@ class SiCDefectMainWindow(QMainWindow):
         if self.current_slice_2d is not None:
             h, w = self.current_slice_2d.shape[:2]
 
+        defects_to_save = []
         counts = {name: 0 for name in CLASS_NAMES.values()}
         for d in self.current_defects:
             cname = d.get("class_name", "")
             if cname in counts:
                 counts[cname] += 1
+            d_copy = dict(d)
+            b = d.get("bbox") or d.get("bbox_xyxy")
+            if b:
+                coords = [round(float(v), 1) for v in b]
+                d_copy["bbox"] = coords
+                d_copy["bbox_xyxy"] = coords
+            defects_to_save.append(d_copy)
 
         payload = {
             "image": img_p.name,
             "image_shape": [h, w],
-            "total_defects": len(self.current_defects),
+            "total_defects": len(defects_to_save),
             "counts": counts,
-            "defects": self.current_defects,
+            "defects": defects_to_save,
             "is_manual_ground_truth": True,
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }

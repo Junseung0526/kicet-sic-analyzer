@@ -335,8 +335,12 @@ def main():
     parser.add_argument("--epochs", type=int, default=1, help="Training epochs (use 1 for fast dry-run)")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
     parser.add_argument("--imgsz", type=int, default=640, help="Image size")
-    parser.add_argument("--device", type=str, default=None, help="Device ('mps', 'cuda:0', 'cpu')")
-    parser.add_argument("--weights", type=str, default="yolov8n.pt", help="Base model weights")
+    default_base_weights = (
+        "models/best_2d_base.pt"
+        if Path("models/best_2d_base.pt").exists()
+        else ("best.pt" if Path("best.pt").exists() else "yolov8n.pt")
+    )
+    parser.add_argument("--weights", type=str, default=default_base_weights, help="Base model weights for fine-tuning (defaults to baseline checkpoint)")
     parser.add_argument("--conf", type=float, default=0.25, help="Inference confidence threshold")
     parser.add_argument("--test-image", type=str, default=None, help="Custom image path for inference")
     parser.add_argument("--model-path", type=str, default=None, help="Trained model path for inference / pseudo-labeling / release")
