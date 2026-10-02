@@ -78,9 +78,12 @@ from matplotlib.figure import Figure
 from src.inference import (
     CLASS_NAMES,
     DEFAULT_TSD_ANGLE_BINS,
+    DEFAULT_TED_ANGLE_BINS,
     analyze_domain_measurements,
     calculate_tsd_angle,
+    calculate_ted_angle,
     classify_tsd_angle,
+    classify_ted_angle,
     get_inference_engine,
     measure_bpd_length,
 )
@@ -144,12 +147,26 @@ TRANSLATIONS = {
         "grid_hotspot": "🔥 최고 밀집 구역: {zone} (결함 {count}개, {pct}%)",
         "grid_no_data": "분석 실행 후 9개 구역별 결함 수와 밀도가 집계됩니다.",
         "grid_headers": ["구역 (Zone)", "방위", "결함 수", "점유율"],
+        "slice_depth_range": "층 범위:",
         "pixel_scale_label": "웨이퍼 해상도 (Pixel Scale):",
         "analysis_bpd_title": "BPD 선 결함 길이 분석 (Dislocation Length, μm)",
         "analysis_bpd_desc": "주성분 분석(PCA) 기반 BPD 결함 장축 길이 측정 및 μm 환산",
         "analysis_bpd_summary": "BPD 결함 수: {cnt}개 | 평균: {mean} μm | 최대: {max} μm | 최소: {min} μm",
         "analysis_bpd_headers": ["ID", "중심 (X, Y)", "길이 (px)", "길이 (μm)"],
         "analysis_bpd_btn": "📈 BPD 길이 분포 히스토그램 생성",
+        "analysis_conversion_title": "BPD → TED 열처리 전위 전환율 (Conversion Rate)",
+        "analysis_conversion_desc": "고온 열처리(Annealing) 전/후 BPD 결함의 TED 전환율 산출",
+        "lbl_before_bpd": "열처리 전 BPD 수:",
+        "lbl_after_bpd": "열처리 후 잔여 BPD 수:",
+        "btn_apply_current_bpd": "📥 현재 BPD 검출값 적용",
+        "lbl_converted_ted": "전환된 TED 수:",
+        "lbl_conversion_rate": "전환율 (Conversion Rate):",
+        "conversion_formula": "공식: Conversion Rate (%) = (Before BPD - After BPD) / (Before BPD) × 100",
+        "analysis_ted_title": "TED 6방향 분류 (TED Component 6-Type, <11-20>)",
+        "analysis_ted_desc": "4H-SiC 버거스 벡터 6방향(60° 간격) 명암 벡터 자동 판별 및 점유율",
+        "analysis_ted_headers": ["라벨", "중심 (°)", "범위 (°)", "결함 수", "점유율 (%)"],
+        "btn_reset_ted_bins": "🔄 기본 6방향 (a~f)",
+        "ted_gauge_title": "TED 6방향 점유율",
         "analysis_tsd_title": "TSD 4방향 판별 및 커스텀 각도 룰셋 (Propagation Angle)",
         "analysis_tsd_desc": "명암 모멘트 0~360° 중심 각도 산출 및 연구원 커스텀 각도 구간 룰셋",
         "analysis_tsd_headers": ["라벨 (Label)", "시작 각도 (°)", "종료 각도 (°)", "결함 수", "비율 (%)"],
@@ -173,6 +190,12 @@ TRANSLATIONS = {
         "tooltip_grid": "웨이퍼 3x3 9분할 격자선 표시 토글 (단축키: G)",
         "tooltip_scale": "실측 웨이퍼 해상도(μm/px) 설정 (BPD 길이 실시간 재계산)",
         "tooltip_bpd_hist": "BPD 선 결함 길이 분포 히스토그램 창 열기",
+        "tooltip_before_bpd": "열처리 전(Before Annealing) BPD 총 개수 입력",
+        "tooltip_after_bpd": "열처리 후(After Annealing) 잔여 BPD 개수 입력",
+        "tooltip_apply_current_bpd": "현재 화면에서 검출된 BPD 개수를 계산기에 자동 입력",
+        "tooltip_reset_ted_bins": "TED 6방향(a~f, 60° 간격) 프리셋으로 복원",
+        "tooltip_depth_start": "3D XRT 스택 탐색 시작 레이어 (1~N)",
+        "tooltip_depth_end": "3D XRT 스택 탐색 종료 레이어 (1~N)",
         "tooltip_add_bin": "새로운 사용자 정의 TSD 각도 판별 구간 추가",
         "tooltip_del_bin": "선택한 각도 판별 구간 삭제",
         "tooltip_reset_bins": "기본 4방향(A~D) 4분면 룰셋으로 복원",
@@ -198,6 +221,7 @@ TRANSLATIONS = {
         "window_title": "KICET SiC Wafer Defect Detection & Classification (ONNX Runtime)",
         "lang_button": "🌐 한국어 (KO)",
         "slice_label": "Slice: {cur}/{tot}",
+        "slice_depth_range": "Depth Range:",
         "brightness": "Brightness:",
         "contrast": "Contrast:",
         "fit_view": "Fit to View",
@@ -244,6 +268,19 @@ TRANSLATIONS = {
         "analysis_bpd_summary": "BPD Count: {cnt} | Mean: {mean} μm | Max: {max} μm | Min: {min} μm",
         "analysis_bpd_headers": ["ID", "Center (X, Y)", "Length (px)", "Length (μm)"],
         "analysis_bpd_btn": "📈 Generate BPD Length Histogram",
+        "analysis_conversion_title": "BPD → TED Annealing Conversion Rate",
+        "analysis_conversion_desc": "Calculate BPD to TED dislocation conversion rate before & after annealing",
+        "lbl_before_bpd": "Before Annealing BPD:",
+        "lbl_after_bpd": "After Annealing BPD:",
+        "btn_apply_current_bpd": "📥 Apply Current BPD",
+        "lbl_converted_ted": "Converted TED Count:",
+        "lbl_conversion_rate": "Conversion Rate:",
+        "conversion_formula": "Formula: Conversion Rate (%) = (Before BPD - After BPD) / (Before BPD) × 100",
+        "analysis_ted_title": "TED 6-Way Directional Classification (<11-20>)",
+        "analysis_ted_desc": "4H-SiC Burgers vector 6-direction (60° interval) contrast vector classification",
+        "analysis_ted_headers": ["Label", "Center (°)", "Range (°)", "Count", "Ratio (%)"],
+        "btn_reset_ted_bins": "🔄 Reset 6-Type (a~f)",
+        "ted_gauge_title": "TED 6-Way Occupancy",
         "analysis_tsd_title": "TSD 4-Way & Custom Angle Rule Sets (Propagation Angle)",
         "analysis_tsd_desc": "Image moments 0~360° centroid angle calculation & custom angle bin rules",
         "analysis_tsd_headers": ["Label", "Start Angle (°)", "End Angle (°)", "Count", "Ratio (%)"],
@@ -267,6 +304,12 @@ TRANSLATIONS = {
         "tooltip_grid": "Toggle 3x3 Grid Overlay (Hotkey: G)",
         "tooltip_scale": "Wafer Pixel Scale Resolution Calibration (μm/px)",
         "tooltip_bpd_hist": "Open BPD Length Histogram Dialog",
+        "tooltip_before_bpd": "Enter total BPD count before annealing",
+        "tooltip_after_bpd": "Enter residual BPD count after annealing",
+        "tooltip_apply_current_bpd": "Auto-fill currently detected BPD count into calculator",
+        "tooltip_reset_ted_bins": "Reset to default TED 6-type preset (a~f, 60° intervals)",
+        "tooltip_depth_start": "3D XRT Stack Exploration Start Layer (1~N)",
+        "tooltip_depth_end": "3D XRT Stack Exploration End Layer (1~N)",
         "tooltip_add_bin": "Add New Custom TSD Angle Bin",
         "tooltip_del_bin": "Delete Selected TSD Angle Bin",
         "tooltip_reset_bins": "Reset to Standard 4-Way Angle Quadrants",
@@ -288,6 +331,7 @@ TRANSLATIONS = {
         "infer_error_title": "Inference Error",
         "infer_error_msg": "Error during defect detection:\n{e}",
     },
+
 }
 
 
@@ -634,6 +678,75 @@ class TSDAngleGaugeBar(QWidget):
         painter.drawText(0, bar_y + bar_h + 16, w, 18, Qt.AlignmentFlag.AlignLeft, txt)
 
 
+class TEDAngleGaugeBar(QWidget):
+    """Visual multi-segment bar showing TED 6-type directional distribution."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setFixedHeight(48)
+        self.bin_data: List[Dict[str, Any]] = []
+        self.total: int = 0
+        self.lang: str = "KO"
+
+        self.color_palette = [
+            QColor("#00e5ff"),  # Cyan (a, 0°)
+            QColor("#76ff03"),  # Lime (b, 60°)
+            QColor("#ffd600"),  # Yellow (c, 120°)
+            QColor("#ff9100"),  # Orange (d, 180°)
+            QColor("#ff4081"),  # Pink (e, 240°)
+            QColor("#b388ff"),  # Purple (f, 300°)
+        ]
+
+    def set_data(self, bins: List[Dict[str, Any]], counts: Dict[str, int], lang: str = "KO"):
+        self.lang = lang
+        self.bin_data = []
+        self.total = sum(counts.values())
+
+        for idx, b in enumerate(bins):
+            lbl = str(b.get("label", "?"))
+            cnt = counts.get(lbl, 0)
+            ratio = (cnt / float(self.total) * 100.0) if self.total > 0 else 0.0
+            color = self.color_palette[idx % len(self.color_palette)]
+            self.bin_data.append({"label": lbl, "count": cnt, "ratio": ratio, "color": color})
+
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        w = self.width()
+        bar_y = 6
+        bar_h = 12
+
+        # Background track
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(36, 40, 48)))
+        painter.drawRoundedRect(0, bar_y, w, bar_h, 4, 4)
+
+        if self.total > 0:
+            curr_x = 0
+            for item in self.bin_data:
+                seg_w = int(round(w * (item["count"] / float(self.total))))
+                if seg_w > 0:
+                    painter.setBrush(QBrush(item["color"]))
+                    painter.drawRoundedRect(curr_x, bar_y, seg_w, bar_h, 3, 3)
+                    curr_x += seg_w
+
+        # Legend text
+        painter.setPen(QColor(160, 168, 180))
+        font = QFont("Helvetica", 9)
+        painter.setFont(font)
+
+        if self.total > 0:
+            parts = [f"{item['label']}: {item['count']}개 ({item['ratio']:.0f}%)" for item in self.bin_data]
+            txt = " | ".join(parts)
+        else:
+            txt = "데이터 대기 중 (Waiting for TED detection data...)" if self.lang == "KO" else "Waiting for TED detection data..."
+
+        painter.drawText(0, bar_y + bar_h + 16, w, 18, Qt.AlignmentFlag.AlignLeft, txt)
+
+
 # ==============================================================================
 # Interactive High-Resolution Wafer Graphics View
 # ==============================================================================
@@ -801,6 +914,10 @@ class WaferCanvasView(QGraphicsView):
                 sub = d.get("sub_class", "TSD")
                 if "angle_deg" in d:
                     tooltip_parts.append(f"Direction: {sub} ({d['angle_deg']:.1f}°)")
+            elif cname == "TED":
+                sub = d.get("sub_class", "TED")
+                if "angle_deg" in d:
+                    tooltip_parts.append(f"Direction: {sub} ({d['angle_deg']:.1f}°)")
 
             tooltip_parts.append(f"Coord: ({bx1:.1f}, {by1:.1f})")
             tooltip_parts.append(f"Size: {width:.1f}x{height:.1f}")
@@ -957,8 +1074,17 @@ class SiCDefectMainWindow(QMainWindow):
         # Precision Domain Analysis State
         self.pixel_size_um: float = 2.50
         self.current_angle_bins: List[Dict[str, Any]] = [dict(b) for b in DEFAULT_TSD_ANGLE_BINS]
+        self.current_ted_angle_bins: List[Dict[str, Any]] = [dict(b) for b in DEFAULT_TED_ANGLE_BINS]
         self.bpd_defects: List[Dict[str, Any]] = []
         self.tsd_defects: List[Dict[str, Any]] = []
+        self.ted_defects: List[Dict[str, Any]] = []
+        self.tiff_reader: Optional[Any] = None
+        self.conversion_stats: Dict[str, Any] = {
+            "before_bpd": 0,
+            "after_bpd": 0,
+            "converted_ted": 0,
+            "conversion_rate_pct": 0.0,
+        }
 
         # Performance Cache for Smooth Real-Time Sliders (Dual-Resolution Proxy + LUT)
         self.base_norm_8bit: Optional[np.ndarray] = None
@@ -1052,7 +1178,7 @@ class SiCDefectMainWindow(QMainWindow):
         bottom_layout.setContentsMargins(8, 6, 8, 6)
         bottom_layout.setSpacing(12)
 
-        # 1. 3D Slice Slider
+        # 1. 3D Slice Slider & Depth Window SpinBoxes
         self.slice_label = QLabel("Slice: 1/1")
         self.slice_slider = QSlider(Qt.Orientation.Horizontal)
         self.slice_slider.setRange(0, 0)
@@ -1060,6 +1186,26 @@ class SiCDefectMainWindow(QMainWindow):
         self.slice_slider.valueChanged.connect(self.on_slice_changed)
         bottom_layout.addWidget(self.slice_label)
         bottom_layout.addWidget(self.slice_slider, stretch=1)
+
+        self.lbl_depth_range = QLabel(self.tr("slice_depth_range"))
+        self.spin_depth_start = QSpinBox()
+        self.spin_depth_start.setRange(1, 1)
+        self.spin_depth_start.setEnabled(False)
+        self.spin_depth_start.setFixedWidth(56)
+        self.spin_depth_start.valueChanged.connect(self.on_depth_range_changed)
+
+        self.lbl_depth_tilde = QLabel("~")
+
+        self.spin_depth_end = QSpinBox()
+        self.spin_depth_end.setRange(1, 1)
+        self.spin_depth_end.setEnabled(False)
+        self.spin_depth_end.setFixedWidth(56)
+        self.spin_depth_end.valueChanged.connect(self.on_depth_range_changed)
+
+        bottom_layout.addWidget(self.lbl_depth_range)
+        bottom_layout.addWidget(self.spin_depth_start)
+        bottom_layout.addWidget(self.lbl_depth_tilde)
+        bottom_layout.addWidget(self.spin_depth_end)
 
         # Separator
         bottom_layout.addWidget(self.create_vsep())
@@ -1501,7 +1647,115 @@ class SiCDefectMainWindow(QMainWindow):
         content_layout.addWidget(self.grp_bpd_analysis)
 
         # ----------------------------------------------------------------------
-        # 2. TSD 4-Way & Custom Angle Rule Sets (Propagation Angle)
+        # 2. BPD -> TED Annealing Conversion Rate Calculator
+        # ----------------------------------------------------------------------
+        self.grp_conversion = QGroupBox(self.tr("analysis_conversion_title"))
+        conv_layout = QVBoxLayout(self.grp_conversion)
+        conv_layout.setContentsMargins(8, 8, 8, 8)
+        conv_layout.setSpacing(6)
+
+        self.lbl_conv_desc = QLabel(self.tr("analysis_conversion_desc"))
+        self.lbl_conv_desc.setWordWrap(True)
+        self.lbl_conv_desc.setStyleSheet("color: #a0a0a0; font-size: 11px;")
+        conv_layout.addWidget(self.lbl_conv_desc)
+
+        conv_form = QGridLayout()
+        conv_form.setContentsMargins(0, 4, 0, 4)
+        conv_form.setSpacing(6)
+
+        self.lbl_before_bpd = QLabel(self.tr("lbl_before_bpd"))
+        self.spin_before_bpd = QSpinBox()
+        self.spin_before_bpd.setRange(0, 999999)
+        self.spin_before_bpd.setValue(0)
+        self.spin_before_bpd.valueChanged.connect(self.calculate_conversion_rate)
+
+        self.lbl_after_bpd = QLabel(self.tr("lbl_after_bpd"))
+        self.spin_after_bpd = QSpinBox()
+        self.spin_after_bpd.setRange(0, 999999)
+        self.spin_after_bpd.setValue(0)
+        self.spin_after_bpd.valueChanged.connect(self.calculate_conversion_rate)
+
+        self.btn_apply_current_bpd = QPushButton(self.tr("btn_apply_current_bpd"))
+        self.btn_apply_current_bpd.clicked.connect(self.on_apply_current_bpd_to_conversion)
+
+        conv_form.addWidget(self.lbl_before_bpd, 0, 0)
+        conv_form.addWidget(self.spin_before_bpd, 0, 1)
+        conv_form.addWidget(self.lbl_after_bpd, 1, 0)
+        conv_form.addWidget(self.spin_after_bpd, 1, 1)
+        conv_form.addWidget(self.btn_apply_current_bpd, 2, 0, 1, 2)
+        conv_layout.addLayout(conv_form)
+
+        # Output conversion rate cards
+        conv_res_hbox = QHBoxLayout()
+
+        card_ted = QFrame()
+        card_ted.setStyleSheet("background-color: #252830; border: 1px solid #3c424e; border-radius: 6px; padding: 6px;")
+        ted_card_layout = QVBoxLayout(card_ted)
+        ted_card_layout.setContentsMargins(4, 4, 4, 4)
+        self.lbl_converted_ted_title = QLabel(self.tr("lbl_converted_ted"))
+        self.lbl_converted_ted_title.setStyleSheet("font-size: 10px; color: #8b949e;")
+        self.lbl_converted_ted_val = QLabel("0 개")
+        self.lbl_converted_ted_val.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffdc00;")
+        ted_card_layout.addWidget(self.lbl_converted_ted_title)
+        ted_card_layout.addWidget(self.lbl_converted_ted_val)
+        conv_res_hbox.addWidget(card_ted, stretch=1)
+
+        card_rate = QFrame()
+        card_rate.setStyleSheet("background-color: #252830; border: 1px solid #3c424e; border-radius: 6px; padding: 6px;")
+        rate_card_layout = QVBoxLayout(card_rate)
+        rate_card_layout.setContentsMargins(4, 4, 4, 4)
+        self.lbl_conversion_rate_title = QLabel(self.tr("lbl_conversion_rate"))
+        self.lbl_conversion_rate_title.setStyleSheet("font-size: 10px; color: #8b949e;")
+        self.lbl_conversion_rate_val = QLabel("0.0 %")
+        self.lbl_conversion_rate_val.setStyleSheet("font-size: 15px; font-weight: bold; color: #8b949e;")
+        rate_card_layout.addWidget(self.lbl_conversion_rate_title)
+        rate_card_layout.addWidget(self.lbl_conversion_rate_val)
+        conv_res_hbox.addWidget(card_rate, stretch=1)
+
+        conv_layout.addLayout(conv_res_hbox)
+
+        self.lbl_conv_formula = QLabel(self.tr("conversion_formula"))
+        self.lbl_conv_formula.setWordWrap(True)
+        self.lbl_conv_formula.setStyleSheet("color: #6b7280; font-size: 10px; font-style: italic;")
+        conv_layout.addWidget(self.lbl_conv_formula)
+
+        content_layout.addWidget(self.grp_conversion)
+
+        # ----------------------------------------------------------------------
+        # 3. TED Component 6-Type Directional Classification (<11-20>, 60 deg)
+        # ----------------------------------------------------------------------
+        self.grp_ted_analysis = QGroupBox(self.tr("analysis_ted_title"))
+        ted_layout = QVBoxLayout(self.grp_ted_analysis)
+        ted_layout.setContentsMargins(8, 8, 8, 8)
+        ted_layout.setSpacing(6)
+
+        self.lbl_ted_desc = QLabel(self.tr("analysis_ted_desc"))
+        self.lbl_ted_desc.setWordWrap(True)
+        self.lbl_ted_desc.setStyleSheet("color: #a0a0a0; font-size: 11px;")
+        ted_layout.addWidget(self.lbl_ted_desc)
+
+        # TED Angle Rule Occupancy Gauge Bar (6 Colors)
+        self.ted_gauge_bar = TEDAngleGaugeBar()
+        ted_layout.addWidget(self.ted_gauge_bar)
+
+        # TED 6-Type Bins Table (6 rows, 5 columns: Label, Center, Range, Count, Ratio)
+        self.table_ted_bins = QTableWidget(len(self.current_ted_angle_bins), 5)
+        self.table_ted_bins.setHorizontalHeaderLabels(self.tr("analysis_ted_headers"))
+        self.table_ted_bins.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table_ted_bins.verticalHeader().setVisible(False)
+        self.table_ted_bins.setFixedHeight(145)
+        self.init_ted_bins_table()
+        ted_layout.addWidget(self.table_ted_bins)
+
+        # Reset button
+        self.btn_reset_ted_bins = QPushButton(self.tr("btn_reset_ted_bins"))
+        self.btn_reset_ted_bins.clicked.connect(self.on_reset_ted_bins)
+        ted_layout.addWidget(self.btn_reset_ted_bins)
+
+        content_layout.addWidget(self.grp_ted_analysis)
+
+        # ----------------------------------------------------------------------
+        # 4. TSD 4-Way & Custom Angle Rule Sets (Propagation Angle)
         # ----------------------------------------------------------------------
         self.grp_tsd_analysis = QGroupBox(self.tr("analysis_tsd_title"))
         tsd_layout = QVBoxLayout(self.grp_tsd_analysis)
@@ -1577,6 +1831,118 @@ class SiCDefectMainWindow(QMainWindow):
             self.table_tsd_bins.setItem(r, 2, item_end)
             self.table_tsd_bins.setItem(r, 3, item_cnt)
             self.table_tsd_bins.setItem(r, 4, item_ratio)
+
+    def init_ted_bins_table(self):
+        """Populates the TED 6-type preset table."""
+        self.table_ted_bins.setRowCount(len(self.current_ted_angle_bins))
+        for r, b in enumerate(self.current_ted_angle_bins):
+            lbl = str(b.get("label", "?"))
+            center = f"{b.get('center', 0.0):.0f}°"
+            st = b.get("start", 0.0)
+            en = b.get("end", 0.0)
+            rng = f"{st:.0f}° ~ {en:.0f}°"
+            item_lbl = QTableWidgetItem(lbl)
+            item_center = QTableWidgetItem(center)
+            item_rng = QTableWidgetItem(rng)
+            item_cnt = QTableWidgetItem("0")
+            item_ratio = QTableWidgetItem("0.0%")
+
+            item_lbl.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_center.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_rng.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_cnt.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_ratio.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            for it in (item_lbl, item_center, item_rng, item_cnt, item_ratio):
+                it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+            self.table_ted_bins.setItem(r, 0, item_lbl)
+            self.table_ted_bins.setItem(r, 1, item_center)
+            self.table_ted_bins.setItem(r, 2, item_rng)
+            self.table_ted_bins.setItem(r, 3, item_cnt)
+            self.table_ted_bins.setItem(r, 4, item_ratio)
+
+    def on_reset_ted_bins(self):
+        """Resets TED 6-type bins back to default preset."""
+        self.current_ted_angle_bins = [dict(b) for b in DEFAULT_TED_ANGLE_BINS]
+        self.init_ted_bins_table()
+        if self.ted_defects:
+            for d in self.ted_defects:
+                ang = float(d.get("angle_deg", 0.0))
+                bin_label = classify_ted_angle(ang, self.current_ted_angle_bins)
+                d["angle_label"] = bin_label
+                d["sub_class"] = f"TED-{bin_label}"
+            self.update_analysis_ui()
+            if self.last_results and "defects" in self.last_results:
+                self.canvas.add_defect_boxes(self.last_results["defects"])
+
+    def calculate_conversion_rate(self):
+        """Calculates BPD to TED conversion rate in real-time."""
+        before = self.spin_before_bpd.value()
+        after = self.spin_after_bpd.value()
+        if before > 0:
+            converted = max(0, before - after)
+            rate = ((before - after) / float(before)) * 100.0
+            rate = max(0.0, min(100.0, rate))
+            self.lbl_conversion_rate_val.setText(f"{rate:.1f} %")
+            self.lbl_converted_ted_val.setText(f"{converted:,} 개")
+            if rate >= 80.0:
+                self.lbl_conversion_rate_val.setStyleSheet("font-size: 15px; font-weight: bold; color: #00e676;")
+            elif rate >= 50.0:
+                self.lbl_conversion_rate_val.setStyleSheet("font-size: 15px; font-weight: bold; color: #ffd600;")
+            else:
+                self.lbl_conversion_rate_val.setStyleSheet("font-size: 15px; font-weight: bold; color: #ff5252;")
+            self.conversion_stats = {
+                "before_bpd": before,
+                "after_bpd": after,
+                "converted_ted": converted,
+                "conversion_rate_pct": round(rate, 2),
+            }
+        else:
+            self.lbl_conversion_rate_val.setText("0.0 %")
+            self.lbl_conversion_rate_val.setStyleSheet("font-size: 15px; font-weight: bold; color: #8b949e;")
+            self.lbl_converted_ted_val.setText("0 개")
+            self.conversion_stats = {
+                "before_bpd": before,
+                "after_bpd": after,
+                "converted_ted": 0,
+                "conversion_rate_pct": 0.0,
+            }
+
+    def on_apply_current_bpd_to_conversion(self):
+        """Auto-fills current detected BPD count into Before or After BPD field."""
+        curr_bpd = len(self.bpd_defects)
+        if self.spin_before_bpd.value() == 0:
+            self.spin_before_bpd.setValue(curr_bpd)
+        else:
+            self.spin_after_bpd.setValue(curr_bpd)
+        self.calculate_conversion_rate()
+
+    def on_depth_range_changed(self):
+        """Constrains slider range when researcher specifies depth window."""
+        if not self.is_3d:
+            return
+        start_val = self.spin_depth_start.value()
+        end_val = self.spin_depth_end.value()
+        if start_val > end_val:
+            self.spin_depth_end.setValue(start_val)
+            end_val = start_val
+
+        # Update slider range
+        self.slice_slider.blockSignals(True)
+        self.slice_slider.setRange(start_val - 1, end_val - 1)
+        # Clamp slider value
+        cur_val = self.slice_slider.value()
+        if cur_val < start_val - 1:
+            cur_val = start_val - 1
+            self.slice_slider.setValue(cur_val)
+        elif cur_val > end_val - 1:
+            cur_val = end_val - 1
+            self.slice_slider.setValue(cur_val)
+        self.slice_slider.blockSignals(False)
+
+        # Trigger slice load
+        self.on_slice_changed(self.slice_slider.value())
 
     def on_pixel_scale_changed(self, val: float):
         """Updates pixel scaling factor and recalculates BPD lengths."""
@@ -1761,6 +2127,33 @@ class SiCDefectMainWindow(QMainWindow):
         # Update TSD Gauge Bar
         if hasattr(self, "tsd_gauge_bar"):
             self.tsd_gauge_bar.set_data(self.current_angle_bins, tsd_counts, lang=self.current_lang)
+
+        # 3. Update TED 6-type counts and ratios in table
+        ted_counts = {str(b["label"]): 0 for b in self.current_ted_angle_bins}
+        for d in self.ted_defects:
+            lbl = d.get("angle_label", "")
+            if lbl in ted_counts:
+                ted_counts[lbl] += 1
+
+        total_ted = len(self.ted_defects)
+        for r, b in enumerate(self.current_ted_angle_bins):
+            if r < self.table_ted_bins.rowCount():
+                lbl = str(b["label"])
+                cnt = ted_counts.get(lbl, 0)
+                ratio = (cnt / float(total_ted) * 100.0) if total_ted > 0 else 0.0
+                item_cnt = self.table_ted_bins.item(r, 3)
+                item_ratio = self.table_ted_bins.item(r, 4)
+                if item_cnt is not None:
+                    item_cnt.setText(str(cnt))
+                if item_ratio is not None:
+                    item_ratio.setText(f"{ratio:.1f}%")
+
+        # Update TED Gauge Bar
+        if hasattr(self, "ted_gauge_bar"):
+            self.ted_gauge_bar.set_data(self.current_ted_angle_bins, ted_counts, lang=self.current_lang)
+
+        # 4. Refresh conversion rate
+        self.calculate_conversion_rate()
 
     def init_grid_tab(self):
         """Initializes Tab 3: 3x3 Wafer Grid Density Map and Viewport Focus controls."""
@@ -2044,6 +2437,35 @@ class SiCDefectMainWindow(QMainWindow):
         self.table_bpd.setHorizontalHeaderLabels(self.tr("analysis_bpd_headers"))
         self.btn_bpd_hist.setText(self.tr("analysis_bpd_btn"))
 
+        # 3D Depth Window
+        self.lbl_depth_range.setText(self.tr("slice_depth_range"))
+        self.spin_depth_start.setToolTip(self.tr("tooltip_depth_start"))
+        self.spin_depth_end.setToolTip(self.tr("tooltip_depth_end"))
+
+        # Tab 2: Precision Analysis - BPD Length
+        self.lbl_pixel_scale.setText(self.tr("pixel_scale_label"))
+        self.grp_bpd_analysis.setTitle(self.tr("analysis_bpd_title"))
+        self.lbl_bpd_desc.setText(self.tr("analysis_bpd_desc"))
+        self.table_bpd.setHorizontalHeaderLabels(self.tr("analysis_bpd_headers"))
+        self.btn_bpd_hist.setText(self.tr("analysis_bpd_btn"))
+
+        # Conversion Card
+        self.grp_conversion.setTitle(self.tr("analysis_conversion_title"))
+        self.lbl_conv_desc.setText(self.tr("analysis_conversion_desc"))
+        self.lbl_before_bpd.setText(self.tr("lbl_before_bpd"))
+        self.lbl_after_bpd.setText(self.tr("lbl_after_bpd"))
+        self.btn_apply_current_bpd.setText(self.tr("btn_apply_current_bpd"))
+        self.lbl_converted_ted_title.setText(self.tr("lbl_converted_ted"))
+        self.lbl_conversion_rate_title.setText(self.tr("lbl_conversion_rate"))
+        self.lbl_conv_formula.setText(self.tr("conversion_formula"))
+
+        # TED 6-Type
+        self.grp_ted_analysis.setTitle(self.tr("analysis_ted_title"))
+        self.lbl_ted_desc.setText(self.tr("analysis_ted_desc"))
+        self.table_ted_bins.setHorizontalHeaderLabels(self.tr("analysis_ted_headers"))
+        self.btn_reset_ted_bins.setText(self.tr("btn_reset_ted_bins"))
+
+        # TSD 4-Way
         self.grp_tsd_analysis.setTitle(self.tr("analysis_tsd_title"))
         self.lbl_tsd_desc.setText(self.tr("analysis_tsd_desc"))
         self.table_tsd_bins.setHorizontalHeaderLabels(self.tr("analysis_tsd_headers"))
@@ -2073,6 +2495,10 @@ class SiCDefectMainWindow(QMainWindow):
         self.chk_grid_overlay.setToolTip(self.tr("tooltip_grid"))
         self.spin_pixel_scale.setToolTip(self.tr("tooltip_scale"))
         self.btn_bpd_hist.setToolTip(self.tr("tooltip_bpd_hist"))
+        self.spin_before_bpd.setToolTip(self.tr("tooltip_before_bpd"))
+        self.spin_after_bpd.setToolTip(self.tr("tooltip_after_bpd"))
+        self.btn_apply_current_bpd.setToolTip(self.tr("tooltip_apply_current_bpd"))
+        self.btn_reset_ted_bins.setToolTip(self.tr("tooltip_reset_ted_bins"))
         self.btn_add_bin.setToolTip(self.tr("tooltip_add_bin"))
         self.btn_del_bin.setToolTip(self.tr("tooltip_del_bin"))
         self.btn_reset_bins.setToolTip(self.tr("tooltip_reset_bins"))
@@ -2116,26 +2542,65 @@ class SiCDefectMainWindow(QMainWindow):
         """Loads a 2D or 3D TIFF image and updates canvas."""
         try:
             self.current_file_path = file_path
-            raw_img, meta = inspect_and_load_xrt(file_path, slice_idx=None)
 
-            self.raw_data = raw_img
+            # Clean up existing open tiff reader
+            if hasattr(self, "tiff_reader") and self.tiff_reader is not None:
+                try:
+                    self.tiff_reader.close()
+                except Exception:
+                    pass
+                self.tiff_reader = None
+
+            raw_img, meta = inspect_and_load_xrt(file_path, slice_idx=0)
+
             self.is_3d = meta["is_3d"]
             self.num_slices = meta["num_slices"]
             self.current_slice_idx = 0
             self.current_meta = meta
 
-            # Configure slice slider for 3D stacks
+            # Configure slice slider & depth spinboxes for 3D stacks
             if self.is_3d and self.num_slices > 1:
+                import tifffile
+                self.tiff_reader = tifffile.TiffFile(str(file_path))
+                self.current_slice_2d = raw_img
+
                 self.slice_slider.setEnabled(True)
+                self.slice_slider.blockSignals(True)
                 self.slice_slider.setRange(0, self.num_slices - 1)
                 self.slice_slider.setValue(0)
+                self.slice_slider.blockSignals(False)
+
+                self.spin_depth_start.setEnabled(True)
+                self.spin_depth_end.setEnabled(True)
+                self.spin_depth_start.blockSignals(True)
+                self.spin_depth_end.blockSignals(True)
+                self.spin_depth_start.setRange(1, self.num_slices)
+                self.spin_depth_end.setRange(1, self.num_slices)
+                self.spin_depth_start.setValue(1)
+                self.spin_depth_end.setValue(self.num_slices)
+                self.spin_depth_start.blockSignals(False)
+                self.spin_depth_end.blockSignals(False)
+
                 self.slice_label.setText(self.tr("slice_label", cur=1, tot=self.num_slices))
-                self.current_slice_2d = self.raw_data[0]
             else:
+                self.current_slice_2d = raw_img
                 self.slice_slider.setEnabled(False)
+                self.slice_slider.blockSignals(True)
                 self.slice_slider.setRange(0, 0)
+                self.slice_slider.blockSignals(False)
+
+                self.spin_depth_start.setEnabled(False)
+                self.spin_depth_end.setEnabled(False)
+                self.spin_depth_start.blockSignals(True)
+                self.spin_depth_end.blockSignals(True)
+                self.spin_depth_start.setRange(1, 1)
+                self.spin_depth_end.setRange(1, 1)
+                self.spin_depth_start.setValue(1)
+                self.spin_depth_end.setValue(1)
+                self.spin_depth_start.blockSignals(False)
+                self.spin_depth_end.blockSignals(False)
+
                 self.slice_label.setText(self.tr("slice_label", cur=1, tot=1))
-                self.current_slice_2d = self.raw_data
 
             # File info label
             h, w = self.current_slice_2d.shape[:2]
@@ -2156,6 +2621,7 @@ class SiCDefectMainWindow(QMainWindow):
             self.last_results = None
             self.bpd_defects.clear()
             self.tsd_defects.clear()
+            self.ted_defects.clear()
             self.init_summary_table()
             self.update_analysis_ui()
 
@@ -2176,13 +2642,34 @@ class SiCDefectMainWindow(QMainWindow):
             QMessageBox.critical(self, self.tr("load_error_title"), self.tr("load_error_msg", e=e))
 
     def on_slice_changed(self, value: int):
-        """Switches current slice in 3D TIFF stack."""
-        if self.is_3d and self.raw_data is not None:
-            self.current_slice_idx = value
-            self.slice_label.setText(self.tr("slice_label", cur=value + 1, tot=self.num_slices))
+        """Switches current slice in 3D TIFF stack with instantaneous proxy feedback."""
+        if not self.is_3d:
+            return
+
+        self.current_slice_idx = value
+        self.slice_label.setText(self.tr("slice_label", cur=value + 1, tot=self.num_slices))
+
+        # Stream requested slice from TiffFile on demand (<25ms)
+        if hasattr(self, "tiff_reader") and self.tiff_reader is not None:
+            self.current_slice_2d = self.tiff_reader.pages[value].asarray()
+        elif self.raw_data is not None and value < len(self.raw_data):
             self.current_slice_2d = self.raw_data[value]
-            self.prepare_slice_cache()
-            self.render_fullres_image()
+
+        self.prepare_slice_cache()
+
+        # Immediate proxy rendering for ultra-smooth 60fps sliding feedback
+        lut = self.get_brightness_contrast_lut()
+        adjusted_proxy = cv2.LUT(self.proxy_norm_8bit, lut)
+        ph, pw = adjusted_proxy.shape[:2]
+        qimg = QImage(adjusted_proxy.data, pw, ph, pw, QImage.Format.Format_Grayscale8)
+        pixmap = QPixmap.fromImage(qimg)
+        self.canvas.set_display_pixmap(pixmap, scale_x=self.proxy_scale_x, scale_y=self.proxy_scale_y, auto_fit=False)
+
+        # Schedule full-resolution rendering once sliding pauses
+        self.debounce_timer.start(60)
+
+        if hasattr(self, "status_file_lbl"):
+            self.update_status_bar()
 
     def prepare_slice_cache(self):
         """Pre-normalizes slice and pre-generates lightweight proxy cache for 60fps sliders."""
@@ -2311,17 +2798,19 @@ class SiCDefectMainWindow(QMainWindow):
         counts = results.get("counts", {})
         defects = results.get("defects", [])
 
-        # Precision Domain Measurements (BPD Length via PCA + TSD Angle via Moments)
+        # Precision Domain Measurements (BPD Length via PCA + TSD Angle via Moments + TED 6-Type)
         if self.current_slice_2d is not None and defects:
             analyze_domain_measurements(
                 image=self.current_slice_2d,
                 defects=defects,
                 pixel_size_um=self.pixel_size_um,
                 angle_bins=self.current_angle_bins,
+                ted_angle_bins=self.current_ted_angle_bins,
             )
 
         self.bpd_defects = [d for d in defects if d.get("class_name") == "BPD"]
         self.tsd_defects = [d for d in defects if d.get("class_name") == "TSD"]
+        self.ted_defects = [d for d in defects if d.get("class_name") == "TED"]
 
         bpd_cnt = counts.get("BPD", 0)
         ted_cnt = counts.get("TED", 0)
@@ -2343,7 +2832,7 @@ class SiCDefectMainWindow(QMainWindow):
         self.table_summary.item(4, 1).setText(str(particle_cnt))
         self.table_summary.item(5, 1).setText(str(grand_total))
 
-        # Update Precision Analysis Tab UI (BPD table & TSD bins)
+        # Update Precision Analysis Tab UI (BPD table, TSD bins, TED bins, Conversion Rate)
         self.update_analysis_ui()
 
         # Draw Bounding Boxes on Canvas with updated tooltips
@@ -2394,8 +2883,10 @@ class SiCDefectMainWindow(QMainWindow):
         defects = self.last_results.get("defects", [])
 
         if save_path.suffix.lower() == ".json":
+            out_data = dict(self.last_results)
+            out_data["conversion_stats"] = self.conversion_stats
             with open(save_path, "w", encoding="utf-8") as f:
-                json.dump(self.last_results, f, indent=2)
+                json.dump(out_data, f, indent=2)
         else:
             with open(save_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
@@ -2414,10 +2905,14 @@ class SiCDefectMainWindow(QMainWindow):
                     "Width",
                     "Height",
                     "Length_um",
+                    "Angle_deg",
+                    "Angle_Label",
                     "TSD_Angle_deg",
                     "TSD_Angle_Label",
                 ])
                 for d in defects:
+                    ang = d.get("angle_deg", "N/A")
+                    ang_lbl = d.get("angle_label", "N/A")
                     writer.writerow([
                         d.get("defect_id", 0),
                         d.get("class_id", 0),
@@ -2433,11 +2928,23 @@ class SiCDefectMainWindow(QMainWindow):
                         d.get("size", [0, 0])[0],
                         d.get("size", [0, 0])[1],
                         d.get("length_um", "N/A"),
-                        d.get("angle_deg", "N/A"),
-                        d.get("angle_label", "N/A"),
+                        ang,
+                        ang_lbl,
+                        ang,
+                        ang_lbl,
                     ])
 
         QMessageBox.information(self, self.tr("export_success_title"), self.tr("export_success_msg", path=save_path))
+
+    def closeEvent(self, event):
+        """Safely cleans up background worker and open TIFF reader handles."""
+        if hasattr(self, "tiff_reader") and self.tiff_reader is not None:
+            try:
+                self.tiff_reader.close()
+            except Exception:
+                pass
+            self.tiff_reader = None
+        super().closeEvent(event)
 
 
 def launch_gui(image_path: Optional[Union[str, Path]] = None):

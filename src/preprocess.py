@@ -48,6 +48,44 @@ def inspect_and_load_xrt(
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
+    suffix = path.suffix.lower()
+    if suffix in (".tif", ".tiff"):
+        with tifffile.TiffFile(str(path)) as tif:
+            num_pages = len(tif.pages)
+            if num_pages > 1:
+                # Multi-page 3D TIFF depth stack
+                is_3d = True
+                num_slices = num_pages
+                first_page = tif.pages[0]
+                p_shape = first_page.shape
+                dtype_str = str(first_page.dtype)
+                orig_shape = (num_pages, *p_shape)
+
+                if slice_idx is not None:
+                    idx = max(0, min(slice_idx, num_slices - 1))
+                    image = tif.pages[idx].asarray()
+                    selected_slice = idx
+                else:
+                    image = tif.asarray()
+                    selected_slice = None
+
+                val_min = float(np.min(image))
+                val_max = float(np.max(image))
+
+                meta: Dict[str, Any] = {
+                    "filepath": str(path),
+                    "filename": path.name,
+                    "original_shape": orig_shape,
+                    "dtype": dtype_str,
+                    "min_val": val_min,
+                    "max_val": val_max,
+                    "is_3d": is_3d,
+                    "num_slices": num_slices,
+                }
+                if selected_slice is not None:
+                    meta["selected_slice"] = selected_slice
+                return image, meta
+
     raw_data = tifffile.imread(str(path))
     original_shape = raw_data.shape
     dtype_str = str(raw_data.dtype)

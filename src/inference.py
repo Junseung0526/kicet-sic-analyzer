@@ -876,6 +876,16 @@ DEFAULT_TSD_ANGLE_BINS = [
     {"label": "D", "start": 270.0, "end": 360.0},
 ]
 
+# Default 6-Direction Angle Bins for TED Classification (KICET 6-Type, <11-20>, 60 deg interval, ±30 deg margin)
+DEFAULT_TED_ANGLE_BINS = [
+    {"label": "a", "start": 330.0, "end": 30.0, "center": 0.0},
+    {"label": "b", "start": 30.0, "end": 90.0, "center": 60.0},
+    {"label": "c", "start": 90.0, "end": 150.0, "center": 120.0},
+    {"label": "d", "start": 150.0, "end": 210.0, "center": 180.0},
+    {"label": "e", "start": 210.0, "end": 270.0, "center": 240.0},
+    {"label": "f", "start": 270.0, "end": 330.0, "center": 300.0},
+]
+
 
 def measure_bpd_length(
     image: np.ndarray,
@@ -1067,29 +1077,137 @@ def classify_tsd_angle(
     return bins[0]["label"] if bins else "A"
 
 
+def calculate_ted_angle(
+    image: np.ndarray,
+    bbox_xyxy: List[float],
+) -> float:
+    """Calculates directional contrast vector angle (0 to 360 deg) for TED defect.
+
+    In 4H-SiC XRT, TED dislocations exhibit asymmetric diffraction contrast pairs
+    aligned with the 6 equivalent <11-20> Burgers vector orientations (60 deg apart).
+    Uses intensity deviation weighted centroid relative to box center.
+
+    Args:
+        image: Full wafer or patch image.
+        bbox_xyxy: [x1, y1, x2, y2] bounding box coordinates.
+
+    Returns:
+        Angle in degrees [0.0, 360.0).
+    """
+    x1, y1, x2, y2 = bbox_xyxy
+    h, w = image.shape[:2]
+
+    margin = 3
+    cx1 = max(0, int(round(x1 - margin)))
+    cy1 = max(0, int(round(y1 - margin)))
+    cx2 = min(w, int(round(x2 + margin)))
+    cy2 = min(h, int(round(y2 + margin)))
+
+    crop = image[cy1:cy2, cx1:cx2]
+    if crop.size == 0:
+        return 0.0
+
+    if crop.ndim == 3:
+        if crop.shape[2] in (3, 4):
+            gray = cv2.cvtColor(crop[:, :, :3], cv2.COLOR_RGB2GRAY)
+        else:
+            gray = crop[:, :, 0]
+    else:
+        gray = crop
+
+    if gray.dtype != np.uint8:
+        g_min, g_max = float(gray.min()), float(gray.max())
+        if g_max > g_min:
+            gray = np.clip((gray - g_min) / (g_max - g_min) * 255.0, 0, 255).astype(np.uint8)
+        else:
+            gray = np.zeros_like(gray, dtype=np.uint8)
+
+    ch, cw = gray.shape[:2]
+    mid_x, mid_y = cw / 2.0, ch / 2.0
+
+    # Intensity deviation weight emphasizing asymmetric core & contrast dipole
+    weight = np.abs(gray.astype(np.float32) - float(np.mean(gray)))
+    sum_w = float(np.sum(weight))
+
+    if sum_w > 1e-4:
+        grid_y, grid_x = np.indices((ch, cw))
+        dx = float(np.sum((grid_x - mid_x) * weight)) / sum_w
+        dy = float(np.sum((grid_y - mid_y) * weight)) / sum_w
+
+        if abs(dx) > 0.05 or abs(dy) > 0.05:
+            deg = float(np.degrees(np.arctan2(dy, dx)))
+            angle = (deg + 360.0) % 360.0
+            return round(angle, 1)
+
+    # Secondary fallback: 2nd-order orientation moment
+    m = cv2.moments(weight)
+    if m["m00"] > 1e-4:
+        mu20, mu02, mu11 = m["mu20"], m["mu02"], m["mu11"]
+        deg = float(np.degrees(0.5 * np.arctan2(2.0 * mu11, mu20 - mu02)))
+        angle = (deg + 360.0) % 360.0
+        return round(angle, 1)
+
+    return 0.0
+
+
+def classify_ted_angle(
+    angle_deg: float,
+    angle_bins: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """Classifies continuous angle (0-360 deg) into TED 6-type bin (a, b, c, d, e, f).
+
+    Default bins correspond to 6 equivalent <11-20> directions (60 deg intervals):
+      a: 0° (330°~30°), b: 60° (30°~90°), c: 120° (90°~150°),
+      d: 180° (150°~210°), e: 240° (210°~270°), f: 300° (270°~330°).
+    """
+    bins = angle_bins if angle_bins is not None else DEFAULT_TED_ANGLE_BINS
+    norm_angle = (float(angle_deg) + 360.0) % 360.0
+
+    for b in bins:
+        start = float(b.get("start", 0.0))
+        end = float(b.get("end", 360.0))
+        label = str(b.get("label", "?"))
+
+        if start <= end:
+            if start <= norm_angle < end or (end >= 360.0 and norm_angle >= start):
+                return label
+        else:
+            # Wrap-around case (e.g. 330° to 30° for bin 'a')
+            if norm_angle >= start or norm_angle < end:
+                return label
+
+    return bins[0]["label"] if bins else "a"
+
+
 def analyze_domain_measurements(
     image: np.ndarray,
     defects: List[Dict[str, Any]],
     pixel_size_um: float = 2.5,
     angle_bins: Optional[List[Dict[str, Any]]] = None,
+    ted_angle_bins: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Performs domain-specific precision measurements:
 
     1. BPD length profiling (px & um via PCA).
     2. TSD 4-way / custom angle bin classification.
+    3. TED 6-type directional classification (<11-20> Burgers vector directions).
 
     Args:
         image: Full wafer image array.
         defects: List of defect dictionaries.
         pixel_size_um: Micrometers per pixel scaling factor.
         angle_bins: Custom angle rule bins for TSD.
+        ted_angle_bins: Custom or default 6-type angle rule bins for TED.
 
     Returns:
         Structured analysis summary with enriched defect items.
     """
-    bins = angle_bins if angle_bins is not None else DEFAULT_TSD_ANGLE_BINS
+    tsd_bins = angle_bins if angle_bins is not None else DEFAULT_TSD_ANGLE_BINS
+    ted_bins = ted_angle_bins if ted_angle_bins is not None else DEFAULT_TED_ANGLE_BINS
+
     bpd_lengths_um: List[float] = []
-    tsd_bin_counts: Dict[str, int] = {str(b["label"]): 0 for b in bins}
+    tsd_bin_counts: Dict[str, int] = {str(b["label"]): 0 for b in tsd_bins}
+    ted_bin_counts: Dict[str, int] = {str(b["label"]): 0 for b in ted_bins}
 
     for d in defects:
         cname = d.get("class_name", "")
@@ -1103,11 +1221,19 @@ def analyze_domain_measurements(
 
         elif cname == "TSD":
             ang = calculate_tsd_angle(image, bbox)
-            bin_label = classify_tsd_angle(ang, bins)
+            bin_label = classify_tsd_angle(ang, tsd_bins)
             d["angle_deg"] = ang
             d["angle_label"] = bin_label
             d["sub_class"] = f"TSD-{bin_label}"
             tsd_bin_counts[bin_label] = tsd_bin_counts.get(bin_label, 0) + 1
+
+        elif cname == "TED":
+            ang = calculate_ted_angle(image, bbox)
+            bin_label = classify_ted_angle(ang, ted_bins)
+            d["angle_deg"] = ang
+            d["angle_label"] = bin_label
+            d["sub_class"] = f"TED-{bin_label}"
+            ted_bin_counts[bin_label] = ted_bin_counts.get(bin_label, 0) + 1
 
     # BPD Statistics
     if bpd_lengths_um:
@@ -1132,11 +1258,24 @@ def analyze_domain_measurements(
         },
     }
 
+    # TED Statistics (6-type component)
+    total_ted = sum(ted_bin_counts.values())
+    ted_stats = {
+        "count": total_ted,
+        "bin_counts": ted_bin_counts,
+        "bin_ratios": {
+            k: round((v / float(total_ted)) * 100.0, 1) if total_ted > 0 else 0.0
+            for k, v in ted_bin_counts.items()
+        },
+    }
+
     return {
         "pixel_size_um": pixel_size_um,
         "bpd_stats": bpd_stats,
         "tsd_stats": tsd_stats,
-        "angle_bins": bins,
+        "ted_stats": ted_stats,
+        "angle_bins": tsd_bins,
+        "ted_angle_bins": ted_bins,
     }
 
 
@@ -1174,10 +1313,14 @@ def export_defect_reports(
             "Width",
             "Height",
             "Length_um",
+            "Angle_deg",
+            "Angle_Label",
             "TSD_Angle_deg",
             "TSD_Angle_Label",
         ])
         for d in defects:
+            ang = d.get("angle_deg", "N/A")
+            ang_lbl = d.get("angle_label", "N/A")
             writer.writerow([
                 d.get("defect_id", 0),
                 d.get("class_id", 0),
@@ -1193,8 +1336,10 @@ def export_defect_reports(
                 d.get("size", [0, 0])[0],
                 d.get("size", [0, 0])[1],
                 d.get("length_um", "N/A"),
-                d.get("angle_deg", "N/A"),
-                d.get("angle_label", "N/A"),
+                ang,
+                ang_lbl,
+                ang,
+                ang_lbl,
             ])
 
     print(f"[Report] Defect reports exported to:")
