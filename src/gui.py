@@ -234,9 +234,12 @@ TRANSLATIONS = {
         "viewer_3d_next": "다음 층 ▶",
         "viewer_3d_sync": "📥 메인 화면에 이 층 적용",
         "viewer_3d_grp_display": "표시 모드 및 렌더링 (Display)",
-        "viewer_3d_mode_single": "단일 직교 단면 (Single Ortho-Slice)",
-        "viewer_3d_mode_stack5": "다중 5개 층 투시 스택 (5-Layer Stack)",
-        "viewer_3d_mode_stack8": "다중 8개 층 정밀 스택 (8-Layer Stack)",
+        "viewer_3d_mode_solid": "🧊 3D 솔리드 체적 큐브 (Solid Connected Block)",
+        "viewer_3d_mode_triplanar": "📐 3D 직교 3단면 연결 탐색 (Tri-Planar: XY+XZ+YZ)",
+        "viewer_3d_mode_dense": "🌫️ 연속 고밀도 체적 투시 (Dense Volume Stack)",
+        "viewer_3d_mode_single": "📄 단일 직교 단면 (Single Ortho-Slice)",
+        "viewer_3d_coronal_y": "횡단면 (Coronal Y):",
+        "viewer_3d_sagittal_x": "종단면 (Sagittal X):",
         "viewer_3d_colormap": "컬러맵:",
         "viewer_3d_opacity": "단면 불투명도:",
         "viewer_3d_zscale": "Z축 두께 강조:",
@@ -373,9 +376,12 @@ TRANSLATIONS = {
         "viewer_3d_next": "Next Layer ▶",
         "viewer_3d_sync": "📥 Sync Layer to Main View",
         "viewer_3d_grp_display": "Display Mode & Rendering",
-        "viewer_3d_mode_single": "Single Ortho-Slice",
-        "viewer_3d_mode_stack5": "Multi-Slice Stack (5 Layers)",
-        "viewer_3d_mode_stack8": "Dense Multi-Slice Stack (8 Layers)",
+        "viewer_3d_mode_solid": "🧊 3D Solid Connected Block (Volumetric Cut)",
+        "viewer_3d_mode_triplanar": "📐 3D Orthogonal Tri-Planar (XY+XZ+YZ)",
+        "viewer_3d_mode_dense": "🌫️ Continuous Dense Volume Stack",
+        "viewer_3d_mode_single": "📄 Single Ortho-Slice",
+        "viewer_3d_coronal_y": "Coronal Cut (Y):",
+        "viewer_3d_sagittal_x": "Sagittal Cut (X):",
         "viewer_3d_colormap": "Colormap:",
         "viewer_3d_opacity": "Slice Opacity:",
         "viewer_3d_zscale": "Z-Thickness Scale:",
@@ -509,15 +515,18 @@ class Wafer3DVolumeViewerDialog(QDialog):
     """Interactive 3D volumetric inspection dialog for SiC multi-slice XRT stacks.
 
     Features:
+    - Complete 3D volume stack pre-loaded into memory ("한번에 다 불러와서").
+    - Authentic Monochrome/Grayscale XRT diffraction contrast (no artificial purple!).
+    - Mode 1: 3D Solid Connected Wafer Block (윗면, 아랫면, 4면 외벽이 실제 이미지로 물리적 연결된 솔리드 체적 및 절단).
+    - Mode 2: 3D Orthogonal Tri-Planar Slicer (수평 XY + 수직 XZ + 수직 YZ 3면 수직 교차 절단면 탐색).
+    - Mode 3: Continuous Dense Volumetric Stack (32개 층 반투명 체적 연속 투시).
+    - Mode 4: Single Ortho-Slice plane.
     - Free 3D XYZ orbit rotation via mouse left-click drag (azimuth & elevation).
     - Mouse zoom (right-click drag / wheel) and pan (middle-click drag).
     - 3D Wafer bounding box wireframe with micrometer scale.
-    - Ortho-slice plane navigation along Z with colormapped textures.
-    - Multi-layer semi-transparent volumetric stacking mode (5 or 8 layers).
     - 3D defect scatter positioning (BPD, TED, TSD, Particle).
     - Quick view orientation presets (Isometric, Top, Front, Side).
-    - Dynamic Z-axis thickness exaggeration presets.
-    - Colormap picker (inferno, viridis, bone, gray, magma, cividis, hot).
+    - Dynamic Z-axis thickness exaggeration presets (1.0x, 2.0x, 3.5x, 5.0x).
     """
 
     slice_selected = pyqtSignal(int)
@@ -542,24 +551,43 @@ class Wafer3DVolumeViewerDialog(QDialog):
         self.pixel_size_um = float(pixel_size_um)
         self.lang = lang if lang in TRANSLATIONS else "KO"
 
-        # Internal rendering properties
+        # Load complete 3D volume stack at once into memory
+        self.volume_3d: Optional[np.ndarray] = None
+        if self.tiff_reader is not None:
+            try:
+                self.volume_3d = self.tiff_reader.asarray()
+            except Exception:
+                self.volume_3d = None
+        if self.volume_3d is None and self.raw_data is not None and self.raw_data.ndim == 3:
+            self.volume_3d = self.raw_data
+
+        # Determine dimensions
+        if self.volume_3d is not None:
+            self.num_slices = int(self.volume_3d.shape[0])
+            self.wafer_h = int(self.volume_3d.shape[1])
+            self.wafer_w = int(self.volume_3d.shape[2])
+        else:
+            self.wafer_w, self.wafer_h = self._probe_wafer_dimensions()
+
+        # Tri-planar cut coordinates
+        self.cur_x = self.wafer_w // 2
+        self.cur_y = self.wafer_h // 2
+
+        # Internal rendering properties - DEFAULT IS REAL GRAYSCALE (No artificial purple!)
         self._slice_cache: Dict[Tuple[int, int], np.ndarray] = {}
-        self.mesh_res: int = 64
-        self.active_colormap: str = "inferno"
-        self.active_opacity: float = 0.85
-        self.active_mode: str = "single"  # "single", "stack_5", "stack_8"
+        self.mesh_res: int = 48
+        self.active_colormap: str = "gray"
+        self.active_opacity: float = 0.88
+        self.active_mode: str = "solid_block"  # "solid_block", "tri_planar", "dense_stack", "single_slice"
         self.show_defects: bool = True
         self.z_scale_factor: float = 2.0
         self.elev: float = 25.0
-        self.azim: float = -60.0
-
-        # Determine wafer width and height
-        self.wafer_w, self.wafer_h = self._probe_wafer_dimensions()
+        self.azim: float = -55.0
 
         # Window setup
         self.setWindowTitle(self._tr("viewer_3d_title"))
-        self.resize(1150, 820)
-        self.setMinimumSize(980, 720)
+        self.resize(1180, 840)
+        self.setMinimumSize(1000, 720)
 
         # Debounce timer for smooth slider dragging
         self.render_timer = QTimer(self)
@@ -590,13 +618,25 @@ class Wafer3DVolumeViewerDialog(QDialog):
             return int(w), int(h)
         return 2895, 2922
 
+    def _norm8(self, arr: np.ndarray) -> np.ndarray:
+        """Min-max normalizes array to uint8."""
+        if arr is None or arr.size == 0:
+            return np.zeros((10, 10), dtype=np.uint8)
+        mn = float(arr.min())
+        mx = float(arr.max())
+        if mx > mn:
+            return ((arr.astype(np.float32) - mn) / (mx - mn) * 255.0).astype(np.uint8)
+        return np.zeros_like(arr, dtype=np.uint8)
+
     def get_slice_8bit(self, idx: int, res: int) -> np.ndarray:
         cache_key = (idx, res)
         if cache_key in self._slice_cache:
             return self._slice_cache[cache_key]
 
         raw = None
-        if self.tiff_reader is not None and idx < len(self.tiff_reader.pages):
+        if self.volume_3d is not None and idx < len(self.volume_3d):
+            raw = self.volume_3d[idx]
+        elif self.tiff_reader is not None and idx < len(self.tiff_reader.pages):
             raw = self.tiff_reader.pages[idx].asarray()
         elif self.raw_data is not None and idx < len(self.raw_data):
             raw = self.raw_data[idx]
@@ -604,8 +644,8 @@ class Wafer3DVolumeViewerDialog(QDialog):
         if raw is None:
             small = np.zeros((res, res), dtype=np.uint8)
         else:
-            norm_8bit = normalize_16bit_to_8bit(raw)
-            small = cv2.resize(norm_8bit, (res, res), interpolation=cv2.INTER_AREA)
+            small_raw = cv2.resize(raw, (res, res), interpolation=cv2.INTER_AREA)
+            small = self._norm8(small_raw)
 
         self._slice_cache[cache_key] = small
         return small
@@ -620,7 +660,7 @@ class Wafer3DVolumeViewerDialog(QDialog):
         # ----------------------------------------------------------------------
         sidebar_scroll = QScrollArea()
         sidebar_scroll.setWidgetResizable(True)
-        sidebar_scroll.setFixedWidth(360)
+        sidebar_scroll.setFixedWidth(370)
         sidebar_scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         sidebar_content = QWidget()
@@ -723,27 +763,55 @@ class Wafer3DVolumeViewerDialog(QDialog):
 
         sidebar_layout.addWidget(grp_slice)
 
-        # 3. Display Mode & Appearance Group
+        # 3. Tri-Planar Cross-Cut Controls Group (Coronal Y & Sagittal X)
+        self.grp_triplanar = QGroupBox(self._tr("viewer_3d_mode_triplanar"))
+        grp_tri_layout = QVBoxLayout(self.grp_triplanar)
+        grp_tri_layout.setSpacing(6)
+
+        self.lbl_y_cut = QLabel(f"{self._tr('viewer_3d_coronal_y')} {self.cur_y} px")
+        self.slider_y = QSlider(Qt.Orientation.Horizontal)
+        self.slider_y.setRange(0, self.wafer_h - 1)
+        self.slider_y.setValue(self.cur_y)
+        self.slider_y.valueChanged.connect(self._on_y_cut_changed)
+        grp_tri_layout.addWidget(self.lbl_y_cut)
+        grp_tri_layout.addWidget(self.slider_y)
+
+        self.lbl_x_cut = QLabel(f"{self._tr('viewer_3d_sagittal_x')} {self.cur_x} px")
+        self.slider_x = QSlider(Qt.Orientation.Horizontal)
+        self.slider_x.setRange(0, self.wafer_w - 1)
+        self.slider_x.setValue(self.cur_x)
+        self.slider_x.valueChanged.connect(self._on_x_cut_changed)
+        grp_tri_layout.addWidget(self.lbl_x_cut)
+        grp_tri_layout.addWidget(self.slider_x)
+
+        sidebar_layout.addWidget(self.grp_triplanar)
+        self.grp_triplanar.setVisible(False)  # Only visible when Tri-Planar mode selected
+
+        # 4. Display Mode & Appearance Group
         grp_display = QGroupBox(self._tr("viewer_3d_grp_display"))
         grp_display_layout = QVBoxLayout(grp_display)
         grp_display_layout.setSpacing(8)
 
         # Mode Selector
         self.combo_mode = QComboBox()
-        self.combo_mode.addItem(self._tr("viewer_3d_mode_single"), "single")
-        self.combo_mode.addItem(self._tr("viewer_3d_mode_stack5"), "stack_5")
-        self.combo_mode.addItem(self._tr("viewer_3d_mode_stack8"), "stack_8")
+        self.combo_mode.addItem(self._tr("viewer_3d_mode_solid"), "solid_block")
+        self.combo_mode.addItem(self._tr("viewer_3d_mode_triplanar"), "tri_planar")
+        self.combo_mode.addItem(self._tr("viewer_3d_mode_dense"), "dense_stack")
+        self.combo_mode.addItem(self._tr("viewer_3d_mode_single"), "single_slice")
         self.combo_mode.currentIndexChanged.connect(self._on_mode_changed)
         grp_display_layout.addWidget(self.combo_mode)
 
-        # Colormap row
+        # Colormap row - PURE MONOCHROME GRAYSCALE FIRST (No purple!)
         row_cmap = QHBoxLayout()
         row_cmap.addWidget(QLabel(self._tr("viewer_3d_colormap")))
         self.combo_cmap = QComboBox()
-        for cm in ["inferno", "viridis", "bone", "gray", "magma", "cividis", "hot"]:
-            self.combo_cmap.addItem(cm, cm)
-        self.combo_cmap.setCurrentText(self.active_colormap)
-        self.combo_cmap.currentTextChanged.connect(self._on_colormap_changed)
+        self.combo_cmap.addItem("원본 흑백 (Grayscale)", "gray")
+        self.combo_cmap.addItem("반전 흑백 (Inverted)", "gray_r")
+        self.combo_cmap.addItem("X-선 고대비 (Bone)", "bone")
+        self.combo_cmap.addItem("학술 Cividis", "cividis")
+        self.combo_cmap.addItem("컬러 심도 (Viridis)", "viridis")
+        self.combo_cmap.setCurrentIndex(0)
+        self.combo_cmap.currentIndexChanged.connect(self._on_colormap_changed)
         row_cmap.addWidget(self.combo_cmap, stretch=1)
         grp_display_layout.addLayout(row_cmap)
 
@@ -774,16 +842,17 @@ class Wafer3DVolumeViewerDialog(QDialog):
         row_res = QHBoxLayout()
         row_res.addWidget(QLabel("메시 해상도:" if self.lang == "KO" else "Mesh Resolution:"))
         self.combo_res = QComboBox()
-        self.combo_res.addItem("고속 (64x64)", 64)
-        self.combo_res.addItem("표준 (80x80)", 80)
-        self.combo_res.addItem("정밀 (100x100)", 100)
+        self.combo_res.addItem("고속 (48x48)", 48)
+        self.combo_res.addItem("표준 (64x64)", 64)
+        self.combo_res.addItem("정밀 (80x80)", 80)
+        self.combo_res.setCurrentIndex(0)
         self.combo_res.currentIndexChanged.connect(self._on_res_changed)
         row_res.addWidget(self.combo_res, stretch=1)
         grp_display_layout.addLayout(row_res)
 
         sidebar_layout.addWidget(grp_display)
 
-        # 4. 3D Defect Scatter Group
+        # 5. 3D Defect Scatter Group
         grp_defects = QGroupBox(self._tr("viewer_3d_grp_defects"))
         grp_defects_layout = QVBoxLayout(grp_defects)
         grp_defects_layout.setSpacing(6)
@@ -915,46 +984,117 @@ class Wafer3DVolumeViewerDialog(QDialog):
         self.ax.set_xlim(0, w)
         self.ax.set_ylim(0, h)
         self.ax.set_zlim(0, max(1, d - 1))
-        self.ax.set_box_aspect([1.0, 1.0, 0.35 * self.z_scale_factor])
+        self.ax.set_box_aspect([1.0, 1.0, 0.40 * self.z_scale_factor])
 
-        # 1. 3D Wafer Bounding Box
+        # 1. 3D Wafer Bounding Box Wireframe
         self._draw_wireframe_box(w, h, d)
 
-        # 2. Render Slices
+        # 2. Render Selected Mode
         res = self.mesh_res
         cmap = plt.get_cmap(self.active_colormap)
-        x_grid = np.linspace(0, w, res)
-        y_grid = np.linspace(0, h, res)
-        X, Y = np.meshgrid(x_grid, y_grid)
+        cur_z = int(self.current_slice_idx)
 
-        if self.active_mode == "single":
-            z_k = float(self.current_slice_idx)
-            Z = np.full_like(X, z_k)
-            norm_img = self.get_slice_8bit(self.current_slice_idx, res).astype(np.float32) / 255.0
-            colors = cmap(norm_img)
-            colors[..., 3] = self.active_opacity
-            self.ax.plot_surface(X, Y, Z, facecolors=colors, shade=False, antialiased=False)
+        if self.active_mode == "solid_block":
+            # Mode 1: Solid 3D Connected Wafer Volume & Cutaway
+            # Top face at cur_z (shows real image slice at current layer)
+            top_raw = self.volume_3d[cur_z] if self.volume_3d is not None else self.get_slice_8bit(cur_z, res)
+            top_img = self._norm8(cv2.resize(top_raw, (res, res), interpolation=cv2.INTER_AREA))
+            X_top, Y_top = np.meshgrid(np.linspace(0, w, res), np.linspace(0, h, res))
+            Z_top = np.full_like(X_top, float(cur_z))
+            self.ax.plot_surface(X_top, Y_top, Z_top, facecolors=cmap(top_img.astype(np.float32) / 255.0),
+                                 shade=False, antialiased=False)
 
-            # Active slice outline border
-            self.ax.plot([0, w, w, 0, 0], [0, 0, h, h, 0], [z_k, z_k, z_k, z_k, z_k],
-                         color="#00e5ff", linestyle="-", linewidth=1.5, alpha=0.9)
-        else:
-            num_layers = 5 if self.active_mode == "stack_5" else 8
+            # Bottom face at 0
+            bot_raw = self.volume_3d[0] if self.volume_3d is not None else self.get_slice_8bit(0, res)
+            bot_img = self._norm8(cv2.resize(bot_raw, (res, res), interpolation=cv2.INTER_AREA))
+            Z_bot = np.full_like(X_top, 0.0)
+            self.ax.plot_surface(X_top, Y_top, Z_bot, facecolors=cmap(bot_img.astype(np.float32) / 255.0),
+                                 shade=False, antialiased=False)
+
+            # Front wall (Y=0, Z from 0 to cur_z)
+            if self.volume_3d is not None and cur_z >= 1:
+                front_raw = self.volume_3d[:cur_z + 1, 0, :]
+                front_img = self._norm8(cv2.resize(front_raw, (res, res), interpolation=cv2.INTER_AREA))
+                X_front, Z_front = np.meshgrid(np.linspace(0, w, res), np.linspace(0, float(cur_z), res))
+                Y_front = np.full_like(X_front, 0.0)
+                self.ax.plot_surface(X_front, Y_front, Z_front, facecolors=cmap(front_img.astype(np.float32) / 255.0),
+                                     shade=False, antialiased=False)
+
+                # Left wall (X=0, Z from 0 to cur_z)
+                left_raw = self.volume_3d[:cur_z + 1, :, 0]
+                left_img = self._norm8(cv2.resize(left_raw, (res, res), interpolation=cv2.INTER_AREA))
+                Y_left, Z_left = np.meshgrid(np.linspace(0, h, res), np.linspace(0, float(cur_z), res))
+                X_left = np.full_like(Y_left, 0.0)
+                self.ax.plot_surface(X_left, Y_left, Z_left, facecolors=cmap(left_img.astype(np.float32) / 255.0),
+                                     shade=False, antialiased=False)
+
+            # Highlight active cut border
+            self.ax.plot([0, w, w, 0, 0], [0, 0, h, h, 0], [cur_z, cur_z, cur_z, cur_z, cur_z],
+                         color="#00e5ff", linestyle="-", linewidth=1.6, alpha=0.95)
+
+        elif self.active_mode == "tri_planar":
+            # Mode 2: Orthogonal Tri-Planar Slicer (XY + XZ + YZ)
+            # 1. Axial Plane (XY at cur_z)
+            xy_raw = self.volume_3d[cur_z] if self.volume_3d is not None else self.get_slice_8bit(cur_z, res)
+            xy_img = self._norm8(cv2.resize(xy_raw, (res, res), interpolation=cv2.INTER_AREA))
+            X_xy, Y_xy = np.meshgrid(np.linspace(0, w, res), np.linspace(0, h, res))
+            Z_xy = np.full_like(X_xy, float(cur_z))
+            self.ax.plot_surface(X_xy, Y_xy, Z_xy, facecolors=cmap(xy_img.astype(np.float32) / 255.0),
+                                 shade=False, alpha=0.90, antialiased=False)
+
+            # 2. Coronal Plane (XZ at cur_y)
+            if self.volume_3d is not None:
+                xz_raw = self.volume_3d[:, self.cur_y, :]
+                xz_img = self._norm8(cv2.resize(xz_raw, (res, res), interpolation=cv2.INTER_AREA))
+                X_xz, Z_xz = np.meshgrid(np.linspace(0, w, res), np.linspace(0, float(d - 1), res))
+                Y_xz = np.full_like(X_xz, float(self.cur_y))
+                self.ax.plot_surface(X_xz, Y_xz, Z_xz, facecolors=cmap(xz_img.astype(np.float32) / 255.0),
+                                     shade=False, alpha=0.90, antialiased=False)
+
+                # 3. Sagittal Plane (YZ at cur_x)
+                yz_raw = self.volume_3d[:, :, self.cur_x]
+                yz_img = self._norm8(cv2.resize(yz_raw, (res, res), interpolation=cv2.INTER_AREA))
+                Y_yz, Z_yz = np.meshgrid(np.linspace(0, h, res), np.linspace(0, float(d - 1), res))
+                X_yz = np.full_like(Y_yz, float(self.cur_x))
+                self.ax.plot_surface(X_yz, Y_yz, Z_yz, facecolors=cmap(yz_img.astype(np.float32) / 255.0),
+                                     shade=False, alpha=0.90, antialiased=False)
+
+            # Colored intersection guides
+            self.ax.plot([0, w], [self.cur_y, self.cur_y], [cur_z, cur_z], color="#00e5ff", linewidth=1.5, alpha=0.9)
+            self.ax.plot([self.cur_x, self.cur_x], [0, h], [cur_z, cur_z], color="#00e676", linewidth=1.5, alpha=0.9)
+            self.ax.plot([self.cur_x, self.cur_x], [self.cur_y, self.cur_y], [0, d - 1], color="#ffd600", linewidth=1.5, alpha=0.9)
+
+        elif self.active_mode == "dense_stack":
+            # Mode 3: Continuous Dense Volumetric Stack (32 layers with blending)
+            num_layers = min(32, d)
             levels = np.unique(np.linspace(0, d - 1, num_layers, dtype=int))
+            X_st, Y_st = np.meshgrid(np.linspace(0, w, res), np.linspace(0, h, res))
             for lvl in levels:
                 z_k = float(lvl)
-                Z = np.full_like(X, z_k)
-                norm_img = self.get_slice_8bit(lvl, res).astype(np.float32) / 255.0
-                colors = cmap(norm_img)
-                is_current = (lvl == self.current_slice_idx)
-                alpha = min(1.0, self.active_opacity) if is_current else max(0.1, self.active_opacity * 0.35)
-                colors[..., 3] = alpha
-                self.ax.plot_surface(X, Y, Z, facecolors=colors, shade=False, antialiased=False)
+                Z_st = np.full_like(X_st, z_k)
+                s_raw = self.volume_3d[lvl] if self.volume_3d is not None else self.get_slice_8bit(lvl, res)
+                s_img = self._norm8(cv2.resize(s_raw, (res, res), interpolation=cv2.INTER_AREA))
+                colors = cmap(s_img.astype(np.float32) / 255.0)
+                is_current = (lvl == cur_z)
+                colors[..., 3] = min(0.9, self.active_opacity) if is_current else max(0.08, self.active_opacity * 0.18)
+                self.ax.plot_surface(X_st, Y_st, Z_st, facecolors=colors, shade=False, antialiased=False)
                 if is_current:
                     self.ax.plot([0, w, w, 0, 0], [0, 0, h, h, 0], [z_k, z_k, z_k, z_k, z_k],
-                                 color="#00e5ff", linestyle="-", linewidth=1.8, alpha=0.95)
+                                 color="#00e5ff", linestyle="-", linewidth=1.6, alpha=0.95)
 
-        # 3. Defect Scatter
+        else:
+            # Mode 4: Single Ortho-Slice
+            s_raw = self.volume_3d[cur_z] if self.volume_3d is not None else self.get_slice_8bit(cur_z, res)
+            s_img = self._norm8(cv2.resize(s_raw, (res, res), interpolation=cv2.INTER_AREA))
+            X_s, Y_s = np.meshgrid(np.linspace(0, w, res), np.linspace(0, h, res))
+            Z_s = np.full_like(X_s, float(cur_z))
+            colors = cmap(s_img.astype(np.float32) / 255.0)
+            colors[..., 3] = self.active_opacity
+            self.ax.plot_surface(X_s, Y_s, Z_s, facecolors=colors, shade=False, antialiased=False)
+            self.ax.plot([0, w, w, 0, 0], [0, 0, h, h, 0], [cur_z, cur_z, cur_z, cur_z, cur_z],
+                         color="#00e5ff", linestyle="-", linewidth=1.6, alpha=0.95)
+
+        # 3. Defect Scatter Markers
         if self.show_defects and self.defects:
             self._draw_defect_scatter()
 
@@ -978,7 +1118,7 @@ class Wafer3DVolumeViewerDialog(QDialog):
         self._update_angle_label()
 
     def _preset_iso(self):
-        self.ax.view_init(elev=25, azim=-60)
+        self.ax.view_init(elev=25, azim=-55)
         self.canvas.draw_idle()
         self._update_angle_label()
 
@@ -1028,6 +1168,16 @@ class Wafer3DVolumeViewerDialog(QDialog):
             self._tr("viewer_3d_slice_info", cur=self.current_slice_idx + 1, tot=self.num_slices, depth=est_depth_um)
         )
 
+    def _on_y_cut_changed(self, val: int):
+        self.cur_y = val
+        self.lbl_y_cut.setText(f"{self._tr('viewer_3d_coronal_y')} {self.cur_y} px")
+        self.render_timer.start(25)
+
+    def _on_x_cut_changed(self, val: int):
+        self.cur_x = val
+        self.lbl_x_cut.setText(f"{self._tr('viewer_3d_sagittal_x')} {self.cur_x} px")
+        self.render_timer.start(25)
+
     def _on_sync_clicked(self):
         self.slice_selected.emit(self.current_slice_idx)
         self.btn_sync.setText("✅ 동기화 완료" if self.lang == "KO" else "✅ Synced")
@@ -1035,10 +1185,11 @@ class Wafer3DVolumeViewerDialog(QDialog):
 
     def _on_mode_changed(self):
         self.active_mode = self.combo_mode.currentData()
+        self.grp_triplanar.setVisible(self.active_mode == "tri_planar")
         self._render_3d_scene()
 
-    def _on_colormap_changed(self, cm: str):
-        self.active_colormap = cm
+    def _on_colormap_changed(self):
+        self.active_colormap = self.combo_cmap.currentData()
         self._render_3d_scene()
 
     def _on_opacity_changed(self, val: int):
