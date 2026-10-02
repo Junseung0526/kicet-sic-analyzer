@@ -685,9 +685,12 @@ class OnnxWaferInferenceEngine:
         class_ids = np.argmax(scores, axis=1)
         confidences = np.max(scores, axis=1)
 
-        # Vectorized dynamic per-class thresholding
+        # Vectorized dynamic per-class thresholding (lower TSD to 0.04 to capture weak candidates)
         num_classes = scores.shape[1]
-        thresh_arr = np.array([self.get_class_threshold(cid) for cid in range(num_classes)], dtype=np.float32)
+        thresh_arr = np.array([
+            min(0.04, self.get_class_threshold(cid)) if cid == 2 else self.get_class_threshold(cid)
+            for cid in range(num_classes)
+        ], dtype=np.float32)
         target_thresh = thresh_arr[class_ids]
 
         mask = confidences >= target_thresh
@@ -776,7 +779,8 @@ class OnnxWaferInferenceEngine:
         counts = {name: 0 for name in CLASS_NAMES.values()}
 
         for class_id, class_name in CLASS_NAMES.items():
-            class_dets = [d for d in raw_detections if d["class_id"] == class_id]
+            min_thresh = self.get_class_threshold(class_id)
+            class_dets = [d for d in raw_detections if d["class_id"] == class_id and d["conf"] >= min_thresh]
             if not class_dets:
                 continue
 
@@ -823,7 +827,33 @@ class OnnxWaferInferenceEngine:
                 enabled=True,
             )
 
-        print(f"[ONNX Inference Complete] Total defects detected: {len(filtered_defects)}")
+        # Collect candidate TSDs that were between 0.04 and target threshold
+        tsd_target_thresh = self.get_class_threshold(2)
+        candidate_tsds: List[Dict[str, Any]] = []
+        raw_candidates = [
+            d for d in raw_detections
+            if d["class_id"] == 2 and 0.04 <= d["conf"] < tsd_target_thresh
+        ]
+        if raw_candidates:
+            c_boxes = np.array([d["box"] for d in raw_candidates], dtype=np.float32)
+            c_scores = np.array([d["conf"] for d in raw_candidates], dtype=np.float32)
+            keep_cand = nms_boxes(c_boxes, c_scores, iou_threshold=0.5)
+            for kidx in keep_cand:
+                d = raw_candidates[kidx]
+                bx1, by1, bx2, by2 = d["box"]
+                cx = (bx1 + bx2) / 2.0
+                cy = (by1 + by2) / 2.0
+                if not any(np.hypot(cx - fd["center_xy"][0], cy - fd["center_xy"][1]) < 35.0 for fd in filtered_defects):
+                    candidate_tsds.append({
+                        "class_id": 2,
+                        "class_name": "TSD",
+                        "confidence": round(float(d["conf"]), 3),
+                        "bbox_xyxy": [round(bx1, 1), round(by1, 1), round(bx2, 1), round(by2, 1)],
+                        "center_xy": [round(cx, 1), round(cy, 1)],
+                        "size": [round(bx2 - bx1, 1), round(by2 - by1, 1)],
+                    })
+
+        print(f"[ONNX Inference Complete] Total defects detected: {len(filtered_defects)}, Missed Candidates: {len(candidate_tsds)}")
         for cname, ctotal in counts.items():
             print(f"  - {cname}: {ctotal}")
 
@@ -832,6 +862,7 @@ class OnnxWaferInferenceEngine:
             "total_defects": len(filtered_defects),
             "counts": counts,
             "defects": filtered_defects,
+            "candidates": candidate_tsds,
         }
 
 

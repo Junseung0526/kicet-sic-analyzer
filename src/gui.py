@@ -2004,6 +2004,10 @@ class SiCDefectMainWindow(QMainWindow):
         self.debounce_timer.setSingleShot(True)
         self.debounce_timer.timeout.connect(self.render_fullres_image)
 
+        # Candidate defect review navigation
+        self.candidate_missed_spots: List[Dict[str, Any]] = []
+        self.candidate_idx: int = 0
+
         # Default model search (Pure pathlib)
         self.model_path = self.locate_default_model()
 
@@ -2176,6 +2180,31 @@ class SiCDefectMainWindow(QMainWindow):
         ann_layout.addWidget(self.lbl_annot_hint)
 
         ann_layout.addStretch(1)
+
+        self.btn_jump_candidate = QPushButton("🎯 놓친 의심 후보 점프")
+        self.btn_jump_candidate.setFixedHeight(28)
+        self.btn_jump_candidate.setToolTip("AI가 감지했으나 신뢰도가 약간 낮아 화면에서 숨겨진 의심 위치로 카메라를 즉시 이동합니다.")
+        self.btn_jump_candidate.setStyleSheet("""
+            QPushButton {
+                background-color: #d97706;
+                color: white;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 2px 10px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #f59e0b;
+            }
+            QPushButton:disabled {
+                background-color: #3d352b;
+                color: #7a7062;
+                border: 1px solid #4a3e2e;
+            }
+        """)
+        self.btn_jump_candidate.setEnabled(False)
+        self.btn_jump_candidate.clicked.connect(self.on_jump_next_candidate)
+        ann_layout.addWidget(self.btn_jump_candidate)
 
         self.btn_save_annotations = QPushButton("💾 수동 라벨 저장 (.json)")
         self.btn_save_annotations.setFixedHeight(28)
@@ -2628,6 +2657,12 @@ class SiCDefectMainWindow(QMainWindow):
         btn_preset_bal.setStyleSheet("font-size: 10px; padding: 2px 6px; background-color: #1b263b; color: #00bcd4; border: 1px solid #0288d1; border-radius: 3px;")
         btn_preset_bal.clicked.connect(lambda: self.apply_conf_preset(0.18, 0.18, 0.04))
         preset_layout.addWidget(btn_preset_bal)
+
+        btn_preset_ultra = QPushButton("🔥 전수검출")
+        btn_preset_ultra.setToolTip("TSD 0.06, TED 0.12 - 1~2개 누락도 허용하지 않고 극한으로 전수 포착")
+        btn_preset_ultra.setStyleSheet("font-size: 10px; padding: 2px 6px; background-color: #4a1515; color: #ff8a80; border: 1px solid #d32f2f; border-radius: 3px;")
+        btn_preset_ultra.clicked.connect(lambda: self.apply_conf_preset(0.12, 0.06, 0.03))
+        preset_layout.addWidget(btn_preset_ultra)
 
         btn_preset_prec = QPushButton("🎯 고정밀")
         btn_preset_prec.setToolTip("TSD 0.35, TED 0.25 - 오탐을 강하게 배제")
@@ -4133,7 +4168,42 @@ class SiCDefectMainWindow(QMainWindow):
         # Update 3x3 Wafer Grid Density Map and Block Buttons
         self.update_grid_stats(defects)
 
+        # Collect missed candidates for 1-click teleporting
+        self.candidate_missed_spots = results.get("candidates", [])
+        self.candidate_idx = 0
+        if hasattr(self, "btn_jump_candidate"):
+            c_cnt = len(self.candidate_missed_spots)
+            if c_cnt > 0:
+                self.btn_jump_candidate.setText(f"🎯 놓친 후보 점프 ({c_cnt}개)")
+                self.btn_jump_candidate.setEnabled(True)
+            else:
+                self.btn_jump_candidate.setText("🎯 놓친 후보 없음")
+                self.btn_jump_candidate.setEnabled(False)
+
         self.btn_export.setEnabled(True)
+
+    def on_jump_next_candidate(self):
+        """Teleports canvas directly to the next missed defect candidate spot."""
+        if not hasattr(self, "candidate_missed_spots") or not self.candidate_missed_spots:
+            QMessageBox.information(self, "의심 후보", "현재 추가로 놓친 것으로 의심되는 후보가 없습니다.")
+            return
+
+        total = len(self.candidate_missed_spots)
+        cand = self.candidate_missed_spots[self.candidate_idx % total]
+        cx, cy = cand.get("center_xy", [0.0, 0.0])
+        conf = cand.get("confidence", 0.0)
+
+        # Teleport camera directly to candidate with zoom
+        self.canvas.focus_on_defect(cand.get("bbox_xyxy", [cx - 15, cy - 15, cx + 15, cy + 15]))
+
+        cur_num = (self.candidate_idx % total) + 1
+        badge = '<span style="background-color: #5c3814; color: #ffb74d; padding: 2px 7px; border-radius: 4px; font-weight: bold; font-size: 11px;">● CANDIDATE</span> '
+        self.lbl_status.setText(
+            badge + f"의심 후보 ({cur_num}/{total})로 카메라 이동 완료! (좌표: {cx:.0f}, {cy:.0f}, Conf: {conf:.2f}) - 맞으면 우클릭 'TSD 추가' 또는 마우스 클릭!"
+        )
+
+        # Advance index for next jump
+        self.candidate_idx = (self.candidate_idx + 1) % total
 
     def on_inference_error(self, err_msg: str):
         """Handles inference failure."""
