@@ -282,20 +282,9 @@ def train_yolo(
             except Exception as e:
                 print(f"[Warning] Could not copy to {isolated_onnx}: {e}")
 
-            # 2. Update root best.onnx as convenience pointer
-            try:
-                shutil.copy2(onnx_path, Path("best.onnx"))
-            except Exception:
-                pass
-
-            # 3. Ensure baseline models/best_2d_base.onnx exists
-            base_model = models_dir / "best_2d_base.onnx"
-            if not base_model.exists():
-                try:
-                    shutil.copy2(onnx_path, base_model)
-                    print(f"[Model Registry] Initialized baseline: {base_model}")
-                except Exception:
-                    pass
+            # 2. Experimental model is preserved as models/{name}.onnx
+            # (Root best.onnx and models/best_2d_base.onnx are safely protected as baseline)
+            print(f"[Model Registry] Baseline model protected. Select '{isolated_onnx.name}' in GUI dropdown to compare.")
 
         except Exception as e:
             print(f"[Export Error] Failed to export ONNX: {e}")
