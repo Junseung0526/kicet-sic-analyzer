@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDoubleSpinBox,
     QFileDialog,
@@ -72,8 +73,10 @@ from PyQt6.QtWidgets import (
 
 import matplotlib
 matplotlib.use("QtAgg")
+import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from mpl_toolkits.mplot3d import Axes3D
 
 from src.inference import (
     CLASS_NAMES,
@@ -216,6 +219,31 @@ TRANSLATIONS = {
         "load_error_msg": "이미지를 여는데 실패했습니다:\n{e}",
         "infer_error_title": "추론 오류",
         "infer_error_msg": "결함 검출 중 오류가 발생했습니다:\n{e}",
+        "btn_3d_viewer": "🧊 3D 입체 뷰어",
+        "tooltip_3d_viewer": "웨이퍼 3D 다중 단면 스택을 마우스로 자유롭게 XYZ 360° 회전하며 입체 탐색합니다.",
+        "viewer_3d_title": "KICET SiC 웨이퍼 3D 입체 단면 및 결함 뷰어 (3D Volumetric Explorer)",
+        "viewer_3d_guide": "💡 마우스 조작:\n• 좌클릭 드래그: XYZ 360° 자유 회전\n• 우클릭/휠: 줌 확대 및 축소\n• 휠 클릭 드래그: 3D 위치 이동",
+        "viewer_3d_grp_camera": "3D 시점 및 제어 (Camera)",
+        "viewer_3d_iso": "🔄 3D 입체 (Isometric)",
+        "viewer_3d_top": "⬆️ 상단 (Top / XY)",
+        "viewer_3d_front": "➡️ 정면 (Front / XZ)",
+        "viewer_3d_side": "📐 측면 (Side / YZ)",
+        "viewer_3d_grp_slice": "단면 층 제어 (Depth Layer / Z-Slice)",
+        "viewer_3d_slice_info": "현재 층: {cur} / {tot} ({depth:.1f} μm)",
+        "viewer_3d_prev": "◀ 이전 층",
+        "viewer_3d_next": "다음 층 ▶",
+        "viewer_3d_sync": "📥 메인 화면에 이 층 적용",
+        "viewer_3d_grp_display": "표시 모드 및 렌더링 (Display)",
+        "viewer_3d_mode_single": "단일 직교 단면 (Single Ortho-Slice)",
+        "viewer_3d_mode_stack5": "다중 5개 층 투시 스택 (5-Layer Stack)",
+        "viewer_3d_mode_stack8": "다중 8개 층 정밀 스택 (8-Layer Stack)",
+        "viewer_3d_colormap": "컬러맵:",
+        "viewer_3d_opacity": "단면 불투명도:",
+        "viewer_3d_zscale": "Z축 두께 강조:",
+        "viewer_3d_grp_defects": "3D 결함 분포 (3D Defects)",
+        "viewer_3d_chk_defects": "3D 결함 마커 표시 (Show 3D Defects)",
+        "viewer_3d_defect_stats": "검출 결함: 총 {total}개\n• BPD: {bpd}개 (하늘색 원)\n• TED: {ted}개 (노란 삼각)\n• TSD: {tsd}개 (빨간 네모)\n• Particle: {part}개 (보라 다이아)",
+        "viewer_3d_close": "닫기 (Close)",
     },
     "EN": {
         "window_title": "KICET SiC Wafer Defect Detection & Classification (ONNX Runtime)",
@@ -330,6 +358,31 @@ TRANSLATIONS = {
         "load_error_msg": "Failed to open image:\n{e}",
         "infer_error_title": "Inference Error",
         "infer_error_msg": "Error during defect detection:\n{e}",
+        "btn_3d_viewer": "🧊 3D Volume Viewer",
+        "tooltip_3d_viewer": "Inspect multi-slice wafer stack with interactive 3D XYZ mouse orbit rotation.",
+        "viewer_3d_title": "KICET SiC Wafer 3D Stereoscopic Section & Defect Viewer",
+        "viewer_3d_guide": "💡 Mouse Control:\n• Left-Drag: Rotate XYZ 360° freely\n• Right-Drag / Wheel: Zoom In / Out\n• Middle-Drag: Pan in 3D space",
+        "viewer_3d_grp_camera": "3D View & Camera Presets",
+        "viewer_3d_iso": "🔄 3D Isometric",
+        "viewer_3d_top": "⬆️ Top View (XY)",
+        "viewer_3d_front": "➡️ Front View (XZ)",
+        "viewer_3d_side": "📐 Side View (YZ)",
+        "viewer_3d_grp_slice": "Depth Layer Navigation (Z-Slice)",
+        "viewer_3d_slice_info": "Current Layer: {cur} / {tot} ({depth:.1f} μm)",
+        "viewer_3d_prev": "◀ Prev Layer",
+        "viewer_3d_next": "Next Layer ▶",
+        "viewer_3d_sync": "📥 Sync Layer to Main View",
+        "viewer_3d_grp_display": "Display Mode & Rendering",
+        "viewer_3d_mode_single": "Single Ortho-Slice",
+        "viewer_3d_mode_stack5": "Multi-Slice Stack (5 Layers)",
+        "viewer_3d_mode_stack8": "Dense Multi-Slice Stack (8 Layers)",
+        "viewer_3d_colormap": "Colormap:",
+        "viewer_3d_opacity": "Slice Opacity:",
+        "viewer_3d_zscale": "Z-Thickness Scale:",
+        "viewer_3d_grp_defects": "3D Defect Distribution",
+        "viewer_3d_chk_defects": "Show 3D Defect Scatter Markers",
+        "viewer_3d_defect_stats": "Defects: Total {total}\n• BPD: {bpd} (Cyan circles)\n• TED: {ted} (Yellow triangles)\n• TSD: {tsd} (Red squares)\n• Particle: {part} (Purple diamonds)",
+        "viewer_3d_close": "Close",
     },
 
 }
@@ -450,6 +503,563 @@ class BPDHistogramDialog(QDialog):
         btn_close.setFixedHeight(32)
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close)
+
+
+class Wafer3DVolumeViewerDialog(QDialog):
+    """Interactive 3D volumetric inspection dialog for SiC multi-slice XRT stacks.
+
+    Features:
+    - Free 3D XYZ orbit rotation via mouse left-click drag (azimuth & elevation).
+    - Mouse zoom (right-click drag / wheel) and pan (middle-click drag).
+    - 3D Wafer bounding box wireframe with micrometer scale.
+    - Ortho-slice plane navigation along Z with colormapped textures.
+    - Multi-layer semi-transparent volumetric stacking mode (5 or 8 layers).
+    - 3D defect scatter positioning (BPD, TED, TSD, Particle).
+    - Quick view orientation presets (Isometric, Top, Front, Side).
+    - Dynamic Z-axis thickness exaggeration presets.
+    - Colormap picker (inferno, viridis, bone, gray, magma, cividis, hot).
+    """
+
+    slice_selected = pyqtSignal(int)
+
+    def __init__(
+        self,
+        parent: Optional[QWidget],
+        tiff_reader: Optional[Any],
+        raw_data: Optional[np.ndarray],
+        num_slices: int,
+        initial_slice_idx: int = 0,
+        defects: Optional[List[Dict[str, Any]]] = None,
+        pixel_size_um: float = 3.2,
+        lang: str = "KO",
+    ):
+        super().__init__(parent)
+        self.tiff_reader = tiff_reader
+        self.raw_data = raw_data
+        self.num_slices = max(1, num_slices)
+        self.current_slice_idx = min(self.num_slices - 1, max(0, initial_slice_idx))
+        self.defects = defects or []
+        self.pixel_size_um = float(pixel_size_um)
+        self.lang = lang if lang in TRANSLATIONS else "KO"
+
+        # Internal rendering properties
+        self._slice_cache: Dict[Tuple[int, int], np.ndarray] = {}
+        self.mesh_res: int = 64
+        self.active_colormap: str = "inferno"
+        self.active_opacity: float = 0.85
+        self.active_mode: str = "single"  # "single", "stack_5", "stack_8"
+        self.show_defects: bool = True
+        self.z_scale_factor: float = 2.0
+        self.elev: float = 25.0
+        self.azim: float = -60.0
+
+        # Determine wafer width and height
+        self.wafer_w, self.wafer_h = self._probe_wafer_dimensions()
+
+        # Window setup
+        self.setWindowTitle(self._tr("viewer_3d_title"))
+        self.resize(1150, 820)
+        self.setMinimumSize(980, 720)
+
+        # Debounce timer for smooth slider dragging
+        self.render_timer = QTimer(self)
+        self.render_timer.setSingleShot(True)
+        self.render_timer.timeout.connect(self._render_3d_scene)
+
+        self._init_ui()
+        self._render_3d_scene()
+
+    def _tr(self, key: str, **kwargs) -> str:
+        text = TRANSLATIONS.get(self.lang, TRANSLATIONS["KO"]).get(key, key)
+        if kwargs:
+            try:
+                return text.format(**kwargs)
+            except Exception:
+                return text
+        return text
+
+    def _probe_wafer_dimensions(self) -> Tuple[int, int]:
+        if self.tiff_reader is not None and len(self.tiff_reader.pages) > 0:
+            h, w = self.tiff_reader.pages[0].shape[:2]
+            return int(w), int(h)
+        if self.raw_data is not None:
+            if self.raw_data.ndim == 3:
+                h, w = self.raw_data.shape[1:3]
+            else:
+                h, w = self.raw_data.shape[:2]
+            return int(w), int(h)
+        return 2895, 2922
+
+    def get_slice_8bit(self, idx: int, res: int) -> np.ndarray:
+        cache_key = (idx, res)
+        if cache_key in self._slice_cache:
+            return self._slice_cache[cache_key]
+
+        raw = None
+        if self.tiff_reader is not None and idx < len(self.tiff_reader.pages):
+            raw = self.tiff_reader.pages[idx].asarray()
+        elif self.raw_data is not None and idx < len(self.raw_data):
+            raw = self.raw_data[idx]
+
+        if raw is None:
+            small = np.zeros((res, res), dtype=np.uint8)
+        else:
+            norm_8bit = normalize_16bit_to_8bit(raw)
+            small = cv2.resize(norm_8bit, (res, res), interpolation=cv2.INTER_AREA)
+
+        self._slice_cache[cache_key] = small
+        return small
+
+    def _init_ui(self):
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(12)
+
+        # ----------------------------------------------------------------------
+        # LEFT: Scrollable Control Sidebar
+        # ----------------------------------------------------------------------
+        sidebar_scroll = QScrollArea()
+        sidebar_scroll.setWidgetResizable(True)
+        sidebar_scroll.setFixedWidth(360)
+        sidebar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        sidebar_content = QWidget()
+        sidebar_layout = QVBoxLayout(sidebar_content)
+        sidebar_layout.setContentsMargins(4, 4, 8, 4)
+        sidebar_layout.setSpacing(12)
+
+        # 1. 3D Camera Controls Group
+        grp_camera = QGroupBox(self._tr("viewer_3d_grp_camera"))
+        grp_camera_layout = QVBoxLayout(grp_camera)
+        grp_camera_layout.setSpacing(8)
+
+        lbl_guide = QLabel(self._tr("viewer_3d_guide"))
+        lbl_guide.setStyleSheet("color: #00b4ff; font-size: 11px; line-height: 1.4;")
+        lbl_guide.setWordWrap(True)
+        grp_camera_layout.addWidget(lbl_guide)
+
+        grid_presets = QGridLayout()
+        grid_presets.setSpacing(6)
+
+        self.btn_iso = QPushButton(self._tr("viewer_3d_iso"))
+        self.btn_iso.clicked.connect(self._preset_iso)
+        grid_presets.addWidget(self.btn_iso, 0, 0)
+
+        self.btn_top = QPushButton(self._tr("viewer_3d_top"))
+        self.btn_top.clicked.connect(self._preset_top)
+        grid_presets.addWidget(self.btn_top, 0, 1)
+
+        self.btn_front = QPushButton(self._tr("viewer_3d_front"))
+        self.btn_front.clicked.connect(self._preset_front)
+        grid_presets.addWidget(self.btn_front, 1, 0)
+
+        self.btn_side = QPushButton(self._tr("viewer_3d_side"))
+        self.btn_side.clicked.connect(self._preset_side)
+        grid_presets.addWidget(self.btn_side, 1, 1)
+
+        grp_camera_layout.addLayout(grid_presets)
+
+        self.lbl_angles = QLabel(f"시점: Elev {self.elev:.0f}°, Azim {self.azim:.0f}°")
+        self.lbl_angles.setStyleSheet("color: #a0a0a0; font-size: 11px; font-weight: bold;")
+        grp_camera_layout.addWidget(self.lbl_angles)
+
+        sidebar_layout.addWidget(grp_camera)
+
+        # 2. Slice Depth Navigation Group
+        grp_slice = QGroupBox(self._tr("viewer_3d_grp_slice"))
+        grp_slice_layout = QVBoxLayout(grp_slice)
+        grp_slice_layout.setSpacing(8)
+
+        est_depth_um = (self.current_slice_idx + 1) * self.pixel_size_um
+        self.lbl_slice_info = QLabel(
+            self._tr("viewer_3d_slice_info", cur=self.current_slice_idx + 1, tot=self.num_slices, depth=est_depth_um)
+        )
+        self.lbl_slice_info.setStyleSheet("color: #00e5ff; font-weight: bold; font-size: 12px;")
+        grp_slice_layout.addWidget(self.lbl_slice_info)
+
+        # Slider & SpinBox row
+        row_slice = QHBoxLayout()
+        self.slider_slice = QSlider(Qt.Orientation.Horizontal)
+        self.slider_slice.setRange(0, self.num_slices - 1)
+        self.slider_slice.setValue(self.current_slice_idx)
+        self.slider_slice.valueChanged.connect(self._on_slider_changed)
+        row_slice.addWidget(self.slider_slice, stretch=1)
+
+        self.spin_slice = QSpinBox()
+        self.spin_slice.setRange(1, self.num_slices)
+        self.spin_slice.setValue(self.current_slice_idx + 1)
+        self.spin_slice.setFixedWidth(64)
+        self.spin_slice.valueChanged.connect(self._on_spin_changed)
+        row_slice.addWidget(self.spin_slice)
+        grp_slice_layout.addLayout(row_slice)
+
+        # Navigation step buttons
+        row_nav = QHBoxLayout()
+        self.btn_prev = QPushButton(self._tr("viewer_3d_prev"))
+        self.btn_prev.clicked.connect(self._prev_slice)
+        row_nav.addWidget(self.btn_prev)
+
+        self.btn_next = QPushButton(self._tr("viewer_3d_next"))
+        self.btn_next.clicked.connect(self._next_slice)
+        row_nav.addWidget(self.btn_next)
+        grp_slice_layout.addLayout(row_nav)
+
+        # Sync button
+        self.btn_sync = QPushButton(self._tr("viewer_3d_sync"))
+        self.btn_sync.setStyleSheet("""
+            QPushButton {
+                background-color: #00838f;
+                color: #ffffff;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 6px;
+            }
+            QPushButton:hover {
+                background-color: #00acc1;
+            }
+        """)
+        self.btn_sync.clicked.connect(self._on_sync_clicked)
+        grp_slice_layout.addWidget(self.btn_sync)
+
+        sidebar_layout.addWidget(grp_slice)
+
+        # 3. Display Mode & Appearance Group
+        grp_display = QGroupBox(self._tr("viewer_3d_grp_display"))
+        grp_display_layout = QVBoxLayout(grp_display)
+        grp_display_layout.setSpacing(8)
+
+        # Mode Selector
+        self.combo_mode = QComboBox()
+        self.combo_mode.addItem(self._tr("viewer_3d_mode_single"), "single")
+        self.combo_mode.addItem(self._tr("viewer_3d_mode_stack5"), "stack_5")
+        self.combo_mode.addItem(self._tr("viewer_3d_mode_stack8"), "stack_8")
+        self.combo_mode.currentIndexChanged.connect(self._on_mode_changed)
+        grp_display_layout.addWidget(self.combo_mode)
+
+        # Colormap row
+        row_cmap = QHBoxLayout()
+        row_cmap.addWidget(QLabel(self._tr("viewer_3d_colormap")))
+        self.combo_cmap = QComboBox()
+        for cm in ["inferno", "viridis", "bone", "gray", "magma", "cividis", "hot"]:
+            self.combo_cmap.addItem(cm, cm)
+        self.combo_cmap.setCurrentText(self.active_colormap)
+        self.combo_cmap.currentTextChanged.connect(self._on_colormap_changed)
+        row_cmap.addWidget(self.combo_cmap, stretch=1)
+        grp_display_layout.addLayout(row_cmap)
+
+        # Opacity row
+        row_opacity = QHBoxLayout()
+        row_opacity.addWidget(QLabel(self._tr("viewer_3d_opacity")))
+        self.slider_opacity = QSlider(Qt.Orientation.Horizontal)
+        self.slider_opacity.setRange(10, 100)
+        self.slider_opacity.setValue(int(self.active_opacity * 100))
+        self.slider_opacity.valueChanged.connect(self._on_opacity_changed)
+        row_opacity.addWidget(self.slider_opacity, stretch=1)
+        grp_display_layout.addLayout(row_opacity)
+
+        # Z-Scale Exaggeration row
+        row_zscale = QHBoxLayout()
+        row_zscale.addWidget(QLabel(self._tr("viewer_3d_zscale")))
+        self.combo_zscale = QComboBox()
+        self.combo_zscale.addItem("1.0x (1:1)", 1.0)
+        self.combo_zscale.addItem("2.0x (권장)", 2.0)
+        self.combo_zscale.addItem("3.5x", 3.5)
+        self.combo_zscale.addItem("5.0x", 5.0)
+        self.combo_zscale.setCurrentIndex(1)
+        self.combo_zscale.currentIndexChanged.connect(self._on_zscale_changed)
+        row_zscale.addWidget(self.combo_zscale, stretch=1)
+        grp_display_layout.addLayout(row_zscale)
+
+        # Detail Resolution row
+        row_res = QHBoxLayout()
+        row_res.addWidget(QLabel("메시 해상도:" if self.lang == "KO" else "Mesh Resolution:"))
+        self.combo_res = QComboBox()
+        self.combo_res.addItem("고속 (64x64)", 64)
+        self.combo_res.addItem("표준 (80x80)", 80)
+        self.combo_res.addItem("정밀 (100x100)", 100)
+        self.combo_res.currentIndexChanged.connect(self._on_res_changed)
+        row_res.addWidget(self.combo_res, stretch=1)
+        grp_display_layout.addLayout(row_res)
+
+        sidebar_layout.addWidget(grp_display)
+
+        # 4. 3D Defect Scatter Group
+        grp_defects = QGroupBox(self._tr("viewer_3d_grp_defects"))
+        grp_defects_layout = QVBoxLayout(grp_defects)
+        grp_defects_layout.setSpacing(6)
+
+        self.chk_defects = QCheckBox(self._tr("viewer_3d_chk_defects"))
+        self.chk_defects.setChecked(self.show_defects)
+        self.chk_defects.stateChanged.connect(self._on_defects_toggled)
+        grp_defects_layout.addWidget(self.chk_defects)
+
+        # Defect Counts
+        cnt_bpd = sum(1 for d in self.defects if d.get("class_name") == "BPD")
+        cnt_ted = sum(1 for d in self.defects if d.get("class_name") == "TED")
+        cnt_tsd = sum(1 for d in self.defects if d.get("class_name") == "TSD")
+        cnt_part = sum(1 for d in self.defects if d.get("class_name") == "Particle")
+        total_cnt = len(self.defects)
+
+        self.lbl_defect_stats = QLabel(
+            self._tr("viewer_3d_defect_stats", total=total_cnt, bpd=cnt_bpd, ted=cnt_ted, tsd=cnt_tsd, part=cnt_part)
+        )
+        self.lbl_defect_stats.setStyleSheet("color: #b0bec5; font-size: 11px; line-height: 1.4;")
+        grp_defects_layout.addWidget(self.lbl_defect_stats)
+
+        sidebar_layout.addWidget(grp_defects)
+
+        sidebar_layout.addStretch(1)
+
+        # Close button
+        btn_close = QPushButton(self._tr("viewer_3d_close"))
+        btn_close.setFixedHeight(34)
+        btn_close.setStyleSheet("background-color: #37474f; color: #ffffff; font-weight: bold; border-radius: 4px;")
+        btn_close.clicked.connect(self.accept)
+        sidebar_layout.addWidget(btn_close)
+
+        sidebar_scroll.setWidget(sidebar_content)
+        main_layout.addWidget(sidebar_scroll)
+
+        # ----------------------------------------------------------------------
+        # RIGHT: Matplotlib 3D Stereoscopic Canvas
+        # ----------------------------------------------------------------------
+        canvas_container = QWidget()
+        canvas_layout = QVBoxLayout(canvas_container)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.fig = Figure(figsize=(8.5, 7.5), facecolor="#18181b")
+        self.canvas = FigureCanvasQTAgg(self.fig)
+        self.ax = self.fig.add_subplot(111, projection="3d", facecolor="#18181b")
+        self.ax.view_init(elev=self.elev, azim=self.azim)
+
+        # Connect mouse release to update angle readout
+        self.canvas.mpl_connect("button_release_event", self._on_canvas_released)
+
+        canvas_layout.addWidget(self.canvas, stretch=1)
+        main_layout.addWidget(canvas_container, stretch=1)
+
+    def _draw_wireframe_box(self, w: int, h: int, d: int):
+        top_z = max(1, d - 1)
+        # Bottom rectangle (z=0)
+        self.ax.plot([0, w, w, 0, 0], [0, 0, h, h, 0], [0, 0, 0, 0, 0],
+                     color="#4a90e2", linestyle="--", linewidth=0.9, alpha=0.55)
+        # Top rectangle (z=top_z)
+        self.ax.plot([0, w, w, 0, 0], [0, 0, h, h, 0], [top_z, top_z, top_z, top_z, top_z],
+                     color="#4a90e2", linestyle="--", linewidth=0.9, alpha=0.55)
+        # 4 Vertical Pillars
+        for x0, y0 in [(0, 0), (w, 0), (w, h), (0, h)]:
+            self.ax.plot([x0, x0], [y0, y0], [0, top_z],
+                         color="#4a90e2", linestyle="--", linewidth=0.9, alpha=0.55)
+
+    def _draw_defect_scatter(self):
+        bpd_x, bpd_y, bpd_z = [], [], []
+        ted_x, ted_y, ted_z = [], [], []
+        tsd_x, tsd_y, tsd_z = [], [], []
+        part_x, part_y, part_z = [], [], []
+
+        cur_z = float(self.current_slice_idx)
+        for d in self.defects:
+            bbox = d.get("bbox", [0, 0, 0, 0])
+            cx = float(d.get("center_x", (bbox[0] + bbox[2]) / 2.0))
+            cy = float(d.get("center_y", (bbox[1] + bbox[3]) / 2.0))
+            cz = float(d.get("slice_idx", cur_z))
+            cname = d.get("class_name", "")
+
+            if cname == "BPD":
+                bpd_x.append(cx); bpd_y.append(cy); bpd_z.append(cz)
+            elif cname == "TED":
+                ted_x.append(cx); ted_y.append(cy); ted_z.append(cz)
+            elif cname == "TSD":
+                tsd_x.append(cx); tsd_y.append(cy); tsd_z.append(cz)
+            elif cname == "Particle":
+                part_x.append(cx); part_y.append(cy); part_z.append(cz)
+
+        if bpd_x:
+            self.ax.scatter(bpd_x, bpd_y, bpd_z, c="#00b4ff", s=40, marker="o",
+                            edgecolors="white", linewidths=0.5, alpha=0.9, label=f"BPD ({len(bpd_x)})")
+        if ted_x:
+            self.ax.scatter(ted_x, ted_y, ted_z, c="#ffd700", s=35, marker="^",
+                            edgecolors="black", linewidths=0.5, alpha=0.9, label=f"TED ({len(ted_x)})")
+        if tsd_x:
+            self.ax.scatter(tsd_x, tsd_y, tsd_z, c="#ff283c", s=45, marker="s",
+                            edgecolors="white", linewidths=0.5, alpha=0.9, label=f"TSD ({len(tsd_x)})")
+        if part_x:
+            self.ax.scatter(part_x, part_y, part_z, c="#b388ff", s=30, marker="d",
+                            edgecolors="black", linewidths=0.5, alpha=0.8, label=f"Particle ({len(part_x)})")
+
+        if any([bpd_x, ted_x, tsd_x, part_x]):
+            self.ax.legend(loc="upper right", facecolor="#252830", edgecolor="#454c59",
+                           labelcolor="#ffffff", fontsize=8)
+
+    def _render_3d_scene(self):
+        # Save camera angle
+        if hasattr(self.ax, "elev") and hasattr(self.ax, "azim"):
+            cur_elev = self.ax.elev if self.ax.elev is not None else self.elev
+            cur_azim = self.ax.azim if self.ax.azim is not None else self.azim
+        else:
+            cur_elev, cur_azim = self.elev, self.azim
+
+        self.ax.cla()
+        self.ax.set_facecolor("#18181b")
+        self.fig.patch.set_facecolor("#18181b")
+        self.ax.xaxis.set_pane_color((0.12, 0.12, 0.16, 0.7))
+        self.ax.yaxis.set_pane_color((0.12, 0.12, 0.16, 0.7))
+        self.ax.zaxis.set_pane_color((0.12, 0.12, 0.16, 0.7))
+        self.ax.grid(True, color="#383848", linestyle=":", alpha=0.5)
+        self.ax.tick_params(colors="#c0c0c0", labelsize=8)
+        self.ax.xaxis.label.set_color("#e0e0e0")
+        self.ax.yaxis.label.set_color("#e0e0e0")
+        self.ax.zaxis.label.set_color("#e0e0e0")
+
+        w, h, d = self.wafer_w, self.wafer_h, self.num_slices
+        self.ax.set_xlim(0, w)
+        self.ax.set_ylim(0, h)
+        self.ax.set_zlim(0, max(1, d - 1))
+        self.ax.set_box_aspect([1.0, 1.0, 0.35 * self.z_scale_factor])
+
+        # 1. 3D Wafer Bounding Box
+        self._draw_wireframe_box(w, h, d)
+
+        # 2. Render Slices
+        res = self.mesh_res
+        cmap = plt.get_cmap(self.active_colormap)
+        x_grid = np.linspace(0, w, res)
+        y_grid = np.linspace(0, h, res)
+        X, Y = np.meshgrid(x_grid, y_grid)
+
+        if self.active_mode == "single":
+            z_k = float(self.current_slice_idx)
+            Z = np.full_like(X, z_k)
+            norm_img = self.get_slice_8bit(self.current_slice_idx, res).astype(np.float32) / 255.0
+            colors = cmap(norm_img)
+            colors[..., 3] = self.active_opacity
+            self.ax.plot_surface(X, Y, Z, facecolors=colors, shade=False, antialiased=False)
+
+            # Active slice outline border
+            self.ax.plot([0, w, w, 0, 0], [0, 0, h, h, 0], [z_k, z_k, z_k, z_k, z_k],
+                         color="#00e5ff", linestyle="-", linewidth=1.5, alpha=0.9)
+        else:
+            num_layers = 5 if self.active_mode == "stack_5" else 8
+            levels = np.unique(np.linspace(0, d - 1, num_layers, dtype=int))
+            for lvl in levels:
+                z_k = float(lvl)
+                Z = np.full_like(X, z_k)
+                norm_img = self.get_slice_8bit(lvl, res).astype(np.float32) / 255.0
+                colors = cmap(norm_img)
+                is_current = (lvl == self.current_slice_idx)
+                alpha = min(1.0, self.active_opacity) if is_current else max(0.1, self.active_opacity * 0.35)
+                colors[..., 3] = alpha
+                self.ax.plot_surface(X, Y, Z, facecolors=colors, shade=False, antialiased=False)
+                if is_current:
+                    self.ax.plot([0, w, w, 0, 0], [0, 0, h, h, 0], [z_k, z_k, z_k, z_k, z_k],
+                                 color="#00e5ff", linestyle="-", linewidth=1.8, alpha=0.95)
+
+        # 3. Defect Scatter
+        if self.show_defects and self.defects:
+            self._draw_defect_scatter()
+
+        # Labels
+        self.ax.set_xlabel("X (px)", fontsize=8, labelpad=4)
+        self.ax.set_ylabel("Y (px)", fontsize=8, labelpad=4)
+        self.ax.set_zlabel("Z (Layer)", fontsize=8, labelpad=4)
+
+        # Restore view angle
+        self.ax.view_init(elev=cur_elev, azim=cur_azim)
+        self.fig.tight_layout()
+        self.canvas.draw_idle()
+        self._update_angle_label()
+
+    def _update_angle_label(self):
+        elev = self.ax.elev if self.ax.elev is not None else self.elev
+        azim = self.ax.azim if self.ax.azim is not None else self.azim
+        self.lbl_angles.setText(f"시점: Elev {elev:.0f}°, Azim {azim:.0f}°")
+
+    def _on_canvas_released(self, event):
+        self._update_angle_label()
+
+    def _preset_iso(self):
+        self.ax.view_init(elev=25, azim=-60)
+        self.canvas.draw_idle()
+        self._update_angle_label()
+
+    def _preset_top(self):
+        self.ax.view_init(elev=90, azim=-90)
+        self.canvas.draw_idle()
+        self._update_angle_label()
+
+    def _preset_front(self):
+        self.ax.view_init(elev=0, azim=-90)
+        self.canvas.draw_idle()
+        self._update_angle_label()
+
+    def _preset_side(self):
+        self.ax.view_init(elev=0, azim=0)
+        self.canvas.draw_idle()
+        self._update_angle_label()
+
+    def _on_slider_changed(self, val: int):
+        self.current_slice_idx = val
+        self.spin_slice.blockSignals(True)
+        self.spin_slice.setValue(val + 1)
+        self.spin_slice.blockSignals(False)
+        self._update_slice_info()
+        self.render_timer.start(25)
+
+    def _on_spin_changed(self, val: int):
+        idx = val - 1
+        self.current_slice_idx = idx
+        self.slider_slice.blockSignals(True)
+        self.slider_slice.setValue(idx)
+        self.slider_slice.blockSignals(False)
+        self._update_slice_info()
+        self.render_timer.start(25)
+
+    def _prev_slice(self):
+        if self.current_slice_idx > 0:
+            self.slider_slice.setValue(self.current_slice_idx - 1)
+
+    def _next_slice(self):
+        if self.current_slice_idx < self.num_slices - 1:
+            self.slider_slice.setValue(self.current_slice_idx + 1)
+
+    def _update_slice_info(self):
+        est_depth_um = (self.current_slice_idx + 1) * self.pixel_size_um
+        self.lbl_slice_info.setText(
+            self._tr("viewer_3d_slice_info", cur=self.current_slice_idx + 1, tot=self.num_slices, depth=est_depth_um)
+        )
+
+    def _on_sync_clicked(self):
+        self.slice_selected.emit(self.current_slice_idx)
+        self.btn_sync.setText("✅ 동기화 완료" if self.lang == "KO" else "✅ Synced")
+        QTimer.singleShot(1200, lambda: self.btn_sync.setText(self._tr("viewer_3d_sync")))
+
+    def _on_mode_changed(self):
+        self.active_mode = self.combo_mode.currentData()
+        self._render_3d_scene()
+
+    def _on_colormap_changed(self, cm: str):
+        self.active_colormap = cm
+        self._render_3d_scene()
+
+    def _on_opacity_changed(self, val: int):
+        self.active_opacity = val / 100.0
+        self.render_timer.start(25)
+
+    def _on_zscale_changed(self):
+        self.z_scale_factor = float(self.combo_zscale.currentData())
+        self._render_3d_scene()
+
+    def _on_res_changed(self):
+        self.mesh_res = int(self.combo_res.currentData())
+        self._render_3d_scene()
+
+    def _on_defects_toggled(self, state: int):
+        self.show_defects = (state == Qt.CheckState.Checked.value or state == 2)
+        self._render_3d_scene()
+
+    def closeEvent(self, event):
+        plt.close(self.fig)
+        super().closeEvent(event)
 
 
 # ==============================================================================
@@ -1206,6 +1816,31 @@ class SiCDefectMainWindow(QMainWindow):
         bottom_layout.addWidget(self.spin_depth_start)
         bottom_layout.addWidget(self.lbl_depth_tilde)
         bottom_layout.addWidget(self.spin_depth_end)
+
+        # 3D Interactive Volume Viewer Button
+        self.btn_3d_viewer = QPushButton("🧊 3D 입체 뷰어")
+        self.btn_3d_viewer.setEnabled(False)
+        self.btn_3d_viewer.setToolTip(self.tr("tooltip_3d_viewer"))
+        self.btn_3d_viewer.setStyleSheet("""
+            QPushButton {
+                background-color: #0d47a1;
+                color: #ffffff;
+                font-weight: bold;
+                border: 1px solid #1976d2;
+                border-radius: 4px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover {
+                background-color: #1565c0;
+            }
+            QPushButton:disabled {
+                background-color: #2a2d34;
+                color: #6c757d;
+                border: 1px solid #383a42;
+            }
+        """)
+        self.btn_3d_viewer.clicked.connect(self.open_3d_volume_viewer)
+        bottom_layout.addWidget(self.btn_3d_viewer)
 
         # Separator
         bottom_layout.addWidget(self.create_vsep())
@@ -2061,6 +2696,31 @@ class SiCDefectMainWindow(QMainWindow):
         dlg = BPDHistogramDialog(self, lengths, lang=self.current_lang)
         dlg.exec()
 
+    def open_3d_volume_viewer(self):
+        """Launches the interactive 3D volumetric inspection dialog."""
+        if not (self.is_3d and self.num_slices > 1):
+            QMessageBox.information(
+                self,
+                "3D 뷰어" if self.current_lang == "KO" else "3D Viewer",
+                "3D 다중 슬라이스 TIFF 파일이 로드되었을 때 사용할 수 있습니다."
+                if self.current_lang == "KO"
+                else "Available only when a 3D multi-slice TIFF file is loaded.",
+            )
+            return
+
+        dlg = Wafer3DVolumeViewerDialog(
+            parent=self,
+            tiff_reader=getattr(self, "tiff_reader", None),
+            raw_data=self.raw_data,
+            num_slices=self.num_slices,
+            initial_slice_idx=self.current_slice_idx,
+            defects=self.current_defects,
+            pixel_size_um=self.pixel_size_um,
+            lang=self.current_lang,
+        )
+        dlg.slice_selected.connect(self.slice_slider.setValue)
+        dlg.exec()
+
     def update_analysis_ui(self):
         """Refreshes BPD and TSD analysis summary labels and table rows."""
         # 1. Update BPD table & stats
@@ -2437,10 +3097,13 @@ class SiCDefectMainWindow(QMainWindow):
         self.table_bpd.setHorizontalHeaderLabels(self.tr("analysis_bpd_headers"))
         self.btn_bpd_hist.setText(self.tr("analysis_bpd_btn"))
 
-        # 3D Depth Window
+        # 3D Depth Window & Viewer
         self.lbl_depth_range.setText(self.tr("slice_depth_range"))
         self.spin_depth_start.setToolTip(self.tr("tooltip_depth_start"))
         self.spin_depth_end.setToolTip(self.tr("tooltip_depth_end"))
+        if hasattr(self, "btn_3d_viewer"):
+            self.btn_3d_viewer.setText(self.tr("btn_3d_viewer"))
+            self.btn_3d_viewer.setToolTip(self.tr("tooltip_3d_viewer"))
 
         # Tab 2: Precision Analysis - BPD Length
         self.lbl_pixel_scale.setText(self.tr("pixel_scale_label"))
@@ -2582,6 +3245,8 @@ class SiCDefectMainWindow(QMainWindow):
                 self.spin_depth_end.blockSignals(False)
 
                 self.slice_label.setText(self.tr("slice_label", cur=1, tot=self.num_slices))
+                if hasattr(self, "btn_3d_viewer"):
+                    self.btn_3d_viewer.setEnabled(True)
             else:
                 self.current_slice_2d = raw_img
                 self.slice_slider.setEnabled(False)
@@ -2599,6 +3264,8 @@ class SiCDefectMainWindow(QMainWindow):
                 self.spin_depth_end.setValue(1)
                 self.spin_depth_start.blockSignals(False)
                 self.spin_depth_end.blockSignals(False)
+                if hasattr(self, "btn_3d_viewer"):
+                    self.btn_3d_viewer.setEnabled(False)
 
                 self.slice_label.setText(self.tr("slice_label", cur=1, tot=1))
 
