@@ -143,7 +143,8 @@ def build_yolo_dataset(
         raise FileNotFoundError(f"No valid image files (*.tif, *.jpg, *.png) found in {raw_path}")
 
     positive_samples: List[Tuple[str, np.ndarray, List[str]]] = []
-    negative_samples: List[Tuple[str, np.ndarray, List[str]]] = []
+    selected_negatives: List[Tuple[str, np.ndarray, List[str]]] = []
+    total_raw_negative_patches = 0
 
     defect_counts = {name: 0 for name in CLASS_NAMES.values()}
 
@@ -199,12 +200,9 @@ def build_yolo_dataset(
             if len(yolo_lines) > 0:
                 positive_samples.append((base_name, patch_img, yolo_lines))
             else:
-                negative_samples.append((base_name, patch_img, []))
-
-    # Subsample negative background patches: keep only bg_subsample_ratio (5%)
-    num_negatives = max(1, int(len(negative_samples) * bg_subsample_ratio))
-    rng.shuffle(negative_samples)
-    selected_negatives = negative_samples[:num_negatives]
+                total_raw_negative_patches += 1
+                if rng.random() < bg_subsample_ratio:
+                    selected_negatives.append((base_name, patch_img, []))
 
     all_samples = positive_samples + selected_negatives
     rng.shuffle(all_samples)
@@ -243,7 +241,7 @@ def build_yolo_dataset(
     stats = {
         "total_patches": len(all_samples),
         "positive_patches": len(positive_samples),
-        "total_raw_negative_patches": len(negative_samples),
+        "total_raw_negative_patches": total_raw_negative_patches,
         "negative_patches_kept": len(selected_negatives),
         "bg_subsample_ratio": bg_subsample_ratio,
         "train_samples": n_train,
