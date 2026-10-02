@@ -118,7 +118,7 @@ TRANSLATIONS = {
         "tab_analysis": "📐 정밀 계측 (Analysis)",
         "tab_grid": "🧭 3x3 구역 (Wafer Grid)",
         "grp_file": "파일 및 모델 설정",
-        "btn_open": "📂 XRT 이미지 열기 (.tif / .tiff)",
+        "btn_open": "📂 이미지 열기 (.tif, .jpg, .png 등)",
         "no_image": "불러온 이미지 없음",
         "file_info": "파일명: {name}\n크기: {w} x {h} px\n타입: {dtype} (범위: [{min_val:.0f}, {max_val:.0f}])",
         "model_info": "모델: {name}",
@@ -261,7 +261,7 @@ TRANSLATIONS = {
         "tab_analysis": "📐 Analysis",
         "tab_grid": "🧭 Wafer Grid",
         "grp_file": "File & Model Configuration",
-        "btn_open": "📂 Open XRT Image (.tif / .tiff)",
+        "btn_open": "📂 Open Image (.tif, .jpg, .png, etc.)",
         "no_image": "No image loaded",
         "file_info": "File: {name}\nSize: {w} x {h} px\nType: {dtype} (Range: [{min_val:.0f}, {max_val:.0f}])",
         "model_info": "Model: {name}",
@@ -3345,7 +3345,7 @@ class SiCDefectMainWindow(QMainWindow):
             self,
             self.tr("dialog_open_image"),
             str(start_dir),
-            "TIFF Images (*.tif *.tiff *.TIF *.TIFF);;All Images (*.png *.jpg *.jpeg *.tif *.tiff);;All Files (*.*)",
+            "All Supported Images (*.tif *.tiff *.jpg *.jpeg *.png *.bmp *.webp);;TIFF Images (*.tif *.tiff);;JPEG Images (*.jpg *.jpeg);;PNG Images (*.png);;All Files (*.*)",
         )
         if file_str:
             self.load_image(Path(file_str))

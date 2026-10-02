@@ -86,36 +86,56 @@ def inspect_and_load_xrt(
                     meta["selected_slice"] = selected_slice
                 return image, meta
 
-    raw_data = tifffile.imread(str(path))
+    raw_data = None
+    if suffix in (".tif", ".tiff"):
+        try:
+            raw_data = tifffile.imread(str(path))
+        except Exception:
+            raw_data = None
+
+    if raw_data is None:
+        # Cross-platform safe decoding supporting Unicode/Korean paths
+        try:
+            raw_bytes = np.fromfile(str(path), dtype=np.uint8)
+            raw_data = cv2.imdecode(raw_bytes, cv2.IMREAD_UNCHANGED)
+        except Exception:
+            raw_data = None
+
+        if raw_data is None:
+            raw_data = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+
+        if raw_data is None:
+            from PIL import Image
+            with Image.open(path) as pil_img:
+                raw_data = np.array(pil_img)
+
+    if raw_data is None:
+        raise ValueError(f"Failed to load image file: {path}")
+
+    # Standardize 3-channel color (BGR/RGB) to single-channel Grayscale for defect detection
+    if raw_data.ndim == 3 and raw_data.shape[2] in (3, 4):
+        raw_data = cv2.cvtColor(raw_data, cv2.COLOR_BGR2GRAY if raw_data.shape[2] == 3 else cv2.COLOR_BGRA2GRAY)
+    elif raw_data.ndim == 3 and raw_data.shape[0] in (1, 3, 4) and raw_data.shape[1] > 64 and raw_data.shape[2] > 64:
+        raw_data = np.transpose(raw_data, (1, 2, 0))
+        if raw_data.shape[2] in (3, 4):
+            raw_data = cv2.cvtColor(raw_data[:, :, :3], cv2.COLOR_RGB2GRAY)
+
     original_shape = raw_data.shape
     dtype_str = str(raw_data.dtype)
     val_min = float(np.min(raw_data))
     val_max = float(np.max(raw_data))
-    # Determine if truly a 3D depth stack vs 2D color image
     is_3d = False
     num_slices = 1
 
     if raw_data.ndim == 2:
         is_3d = False
         num_slices = 1
-    elif raw_data.ndim == 3:
-        # Check if the 3rd dimension is color channels (RGB/RGBA)
-        if original_shape[2] in (1, 3, 4):
-            is_3d = False
-            num_slices = 1
-        elif original_shape[0] in (1, 3, 4) and original_shape[1] > 64 and original_shape[2] > 64:
-            # Channel-first 2D color image (C, H, W) -> transpose to (H, W, C)
-            raw_data = np.transpose(raw_data, (1, 2, 0))
-            original_shape = raw_data.shape
-            is_3d = False
-            num_slices = 1
-        else:
-            # Truly a 3D depth stack of 2D slices (e.g., shape = (D, H, W))
-            is_3d = True
-            num_slices = original_shape[0]
-    elif raw_data.ndim >= 4:
+    elif raw_data.ndim >= 3 and raw_data.shape[0] > 4:
+        # Truly a 3D depth stack of 2D slices (D, H, W)
         is_3d = True
         num_slices = original_shape[0]
+        if slice_idx is not None:
+            raw_data = raw_data[max(0, min(slice_idx, num_slices - 1))]
 
     meta: Dict[str, Any] = {
         "filepath": str(path),

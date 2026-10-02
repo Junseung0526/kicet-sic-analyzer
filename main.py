@@ -52,6 +52,23 @@ def run_generate_mock(
     print("Mock XRT data generation completed successfully.\n")
 
 
+IMAGE_EXTENSIONS = (
+    "*.tif", "*.tiff", "*.TIF", "*.TIFF",
+    "*.jpg", "*.jpeg", "*.JPG", "*.JPEG",
+    "*.png", "*.PNG",
+    "*.bmp", "*.BMP",
+    "*.webp", "*.WEBP",
+)
+
+
+def find_image_files(directory: Path) -> list[Path]:
+    """Finds all supported images (.tif, .jpg, .png, etc.) in a directory."""
+    files = []
+    for ext in IMAGE_EXTENSIONS:
+        files.extend(directory.glob(ext))
+    return sorted(list(set(files)))
+
+
 def run_inspect_and_slice(
     raw_dir: Path,
     sliced_dir: Path,
@@ -60,9 +77,9 @@ def run_inspect_and_slice(
 ):
     """Inspects raw files, converts 16-bit to 8-bit CLAHE, and slices to disk."""
     print(f"\n[Step: Inspection & Preprocessing]")
-    raw_files = sorted(list(raw_dir.glob("*.tif")) + list(raw_dir.glob("*.tiff")))
+    raw_files = find_image_files(raw_dir)
     if not raw_files:
-        print(f"[Error] No TIFF files found in {raw_dir}.")
+        print(f"[Error] No supported image files found in {raw_dir}.")
         return
 
     sliced_dir.mkdir(parents=True, exist_ok=True)
@@ -222,12 +239,7 @@ def main():
     sliced_dir = project_root / args.sliced_dir
     dataset_dir = project_root / args.dataset_dir
 
-    raw_files = (
-        list(raw_dir.glob("*.tif"))
-        + list(raw_dir.glob("*.tiff"))
-        + list(raw_dir.glob("*.TIF"))
-        + list(raw_dir.glob("*.TIFF"))
-    )
+    raw_files = find_image_files(raw_dir)
 
     print(f"=== SiC Wafer Defect AI Engine ===")
     print(f"Mode: {args.mode}")
@@ -326,7 +338,7 @@ def main():
             print("[Status] Raw data is not yet downloaded. Creating synthetic 16-bit XRT data...")
             # For quick dry-run test, create two 2048x2048 synthetic images
             run_generate_mock(raw_dir, num_images=2, shape=(2048, 2048), num_defects=40)
-            raw_files = sorted(list(raw_dir.glob("*.tif")))
+            raw_files = find_image_files(raw_dir)
         else:
             print(f"[Status] Real raw data detected ({len(raw_files)} files). Proceeding with raw files...")
 

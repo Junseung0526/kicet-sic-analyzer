@@ -133,16 +133,14 @@ def build_yolo_dataset(
     for d in [train_img_dir, val_img_dir, train_lbl_dir, val_lbl_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
-    # Find raw image files
-    raw_files = sorted(
-        list(raw_path.glob("*.tif"))
-        + list(raw_path.glob("*.tiff"))
-        + list(raw_path.glob("*.TIF"))
-        + list(raw_path.glob("*.TIFF"))
-    )
+    IMAGE_EXTS = ("*.tif", "*.tiff", "*.TIF", "*.TIFF", "*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG", "*.bmp")
+    raw_files_set = set()
+    for ext in IMAGE_EXTS:
+        raw_files_set.update(raw_path.glob(ext))
+    raw_files = sorted(list(raw_files_set))
 
     if not raw_files:
-        raise FileNotFoundError(f"No TIFF files found in {raw_path}")
+        raise FileNotFoundError(f"No valid image files (*.tif, *.jpg, *.png) found in {raw_path}")
 
     positive_samples: List[Tuple[str, np.ndarray, List[str]]] = []
     negative_samples: List[Tuple[str, np.ndarray, List[str]]] = []
