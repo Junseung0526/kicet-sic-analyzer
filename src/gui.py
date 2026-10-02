@@ -4050,7 +4050,7 @@ class SiCDefectMainWindow(QMainWindow):
             model_path=self.model_path,
             conf_threshold=min(class_confs.values()),
             patch_size=640,
-            overlap=0.2,
+            overlap=0.25,
             class_conf_thresholds=class_confs,
             enhance_contrast=enhance_contrast,
             clahe_clip_limit=clahe_clip,
