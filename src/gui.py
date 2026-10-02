@@ -1688,6 +1688,7 @@ class SiCDefectMainWindow(QMainWindow):
         self.bpd_defects: List[Dict[str, Any]] = []
         self.tsd_defects: List[Dict[str, Any]] = []
         self.ted_defects: List[Dict[str, Any]] = []
+        self.current_defects: List[Dict[str, Any]] = []
         self.tiff_reader: Optional[Any] = None
         self.conversion_stats: Dict[str, Any] = {
             "before_bpd": 0,
@@ -2708,13 +2709,22 @@ class SiCDefectMainWindow(QMainWindow):
             )
             return
 
+        # Safely collect detected defects if available
+        defects = []
+        if getattr(self, "current_defects", None):
+            defects = self.current_defects
+        elif getattr(self, "last_results", None) and "defects" in self.last_results:
+            defects = self.last_results["defects"]
+        elif getattr(self, "bpd_defects", None) or getattr(self, "tsd_defects", None) or getattr(self, "ted_defects", None):
+            defects = (getattr(self, "bpd_defects", []) or []) + (getattr(self, "tsd_defects", []) or []) + (getattr(self, "ted_defects", []) or [])
+
         dlg = Wafer3DVolumeViewerDialog(
             parent=self,
             tiff_reader=getattr(self, "tiff_reader", None),
             raw_data=self.raw_data,
             num_slices=self.num_slices,
             initial_slice_idx=self.current_slice_idx,
-            defects=self.current_defects,
+            defects=defects,
             pixel_size_um=self.pixel_size_um,
             lang=self.current_lang,
         )
@@ -3289,6 +3299,7 @@ class SiCDefectMainWindow(QMainWindow):
             self.bpd_defects.clear()
             self.tsd_defects.clear()
             self.ted_defects.clear()
+            self.current_defects.clear()
             self.init_summary_table()
             self.update_analysis_ui()
 
@@ -3475,6 +3486,7 @@ class SiCDefectMainWindow(QMainWindow):
                 ted_angle_bins=self.current_ted_angle_bins,
             )
 
+        self.current_defects = list(defects)
         self.bpd_defects = [d for d in defects if d.get("class_name") == "BPD"]
         self.tsd_defects = [d for d in defects if d.get("class_name") == "TSD"]
         self.ted_defects = [d for d in defects if d.get("class_name") == "TED"]
