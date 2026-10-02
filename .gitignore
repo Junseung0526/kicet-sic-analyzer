@@ -47,12 +47,10 @@ data/sliced/*
 data/dataset/images/*
 data/dataset/labels/*
 !data/dataset/.gitkeep
-data/raw/*.tif
-data/raw/*.tiff
-data/raw/*.TIF
-data/raw/*.TIFF
-data/mock_samples/*.tif
-data/mock_samples/*.tiff
+data/raw/*
+!data/raw/.gitkeep
+data/mock_samples/*
+!data/mock_samples/.gitkeep
 
 # Logs
 *.log

@@ -456,17 +456,25 @@ def import_kicet_dataset(
     source_dir: Union[str, Path] = "/Volumes/T9 Junseung/세라믹 기술원 데이터/XRT 2D",
     target_raw_dir: Union[str, Path] = "data/raw",
     use_symlink: bool = True,
+    include_jpg: bool = True,
+    include_subtiles: bool = False,
+    allow_unannotated: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Discovers KICET raw 2D XRT TIFF files and their ImageJ ROIs, and imports them to data/raw.
+    """Discovers KICET raw 2D XRT images (TIFF & JPG) across 1~9 Area and imports them to data/raw.
 
     Args:
         source_dir: Base directory where KICET data resides.
         target_raw_dir: Destination data/raw directory.
-        use_symlink: If True, creates symlinks to large TIFFs instead of copying.
+        use_symlink: If True, creates symlinks to large files instead of copying.
+        include_jpg: Whether to include .jpg / .jpeg full-wafer scans.
+        include_subtiles: Whether to include small patch tiles (e.g. 1.jpg ~ 16.jpg).
+        allow_unannotated: If True, imports images lacking .roi files without JSON (for pseudo-labeling).
 
     Returns:
         List of imported dataset summaries.
     """
+    import zipfile
+
     src_path = Path(source_dir)
     dst_path = Path(target_raw_dir)
     dst_path.mkdir(parents=True, exist_ok=True)
@@ -474,59 +482,36 @@ def import_kicet_dataset(
     if not src_path.exists():
         raise FileNotFoundError(f"KICET source directory not found: {src_path}")
 
-    # Find all TIFF files in source directory
-    tiff_files = sorted(list(src_path.rglob("*.tif")) + list(src_path.rglob("*.tiff")))
+    # Find image files in source directory
+    valid_exts = [".tif", ".tiff"]
+    if include_jpg:
+        valid_exts.extend([".jpg", ".jpeg", ".png"])
+
+    img_files: List[Path] = []
+    for ext in valid_exts:
+        img_files.extend(src_path.rglob(f"*{ext}"))
+        img_files.extend(src_path.rglob(f"*{ext.upper()}"))
+    img_files = sorted(list(set(img_files)))
+
+    if not include_subtiles:
+        # Filter out sub-tiles like 1.jpg ~ 16.jpg
+        img_files = [p for p in img_files if not p.stem.isdigit()]
 
     imported_summary: List[Dict[str, Any]] = []
 
-    for idx, tiff_file in enumerate(tiff_files, 1):
-        parent_dir = tiff_file.parent
+    for idx, img_file in enumerate(img_files, 1):
+        parent_dir = img_file.parent
+        suffix = img_file.suffix.lower()
 
-        # Inspect image shape
-        try:
-            img, meta = inspect_and_load_xrt(tiff_file)
-            img_shape = img.shape[:2]
-        except Exception as e:
-            print(f"[Skip] Could not read {tiff_file}: {e}")
-            continue
-
-        # Look for corresponding ROI files in the same directory
-        raw_roi_files = sorted(list(parent_dir.glob("*.roi")))
-
-        # Filter ROI files by filename context (e.g. avoid matching After ROIs to Before TIF)
-        t_stem = tiff_file.stem.lower()
-        roi_files = []
-        for r in raw_roi_files:
-            r_name = r.name.lower()
-            if "after" in t_stem and "before" in r_name:
-                continue
-            if "before" in t_stem and "after" in r_name:
-                continue
-            roi_files.append(r)
-
-        if not roi_files:
-            print(f"[Skip] No matching ROI label files for {tiff_file.name} in {parent_dir.name}")
-            continue
-
-        all_defects: List[Dict[str, Any]] = []
-        for rfile in roi_files:
-            parsed = parse_kicet_roi_file(rfile, img_shape, start_id=len(all_defects) + 1)
-            all_defects.extend(parsed)
-
-        if not all_defects:
-            print(f"[Skip] Zero valid defects found for {tiff_file.name}")
-            continue
-
-        # Create standardized target file name
-        # E.g. "kicet_1area_after_annealing_1.tif"
-        rel_parts = tiff_file.relative_to(src_path).parts
+        # Build standardized destination filename
+        rel_parts = img_file.relative_to(src_path).parts
         area_prefix = ""
         for part in rel_parts:
             if "area" in part.lower():
                 area_prefix = part.lower().replace(" ", "") + "_"
                 break
 
-        safe_stem = tiff_file.stem.strip().lower().replace(" ", "_")
+        safe_stem = img_file.stem.strip().lower().replace(" ", "_")
         parent_stem = parent_dir.name.strip().lower().replace(" ", "_")
         if parent_stem in safe_stem:
             dest_name = f"kicet_{area_prefix}{safe_stem}"
@@ -537,24 +522,121 @@ def import_kicet_dataset(
         else:
             dest_name = f"kicet_{area_prefix}{parent_stem}_{safe_stem}"
 
-        dest_tif = dst_path / f"{dest_name}.tif"
+        dest_file = dst_path / f"{dest_name}{suffix}"
         dest_json = dst_path / f"{dest_name}.json"
 
+        # Check if already imported
+        already_linked = dest_file.exists() or (dst_path / f"{dest_name}.tif").exists()
+
+        # Look for corresponding ROI files in parent directory
+        raw_roi_files = sorted(list(parent_dir.glob("*.roi")))
+
+        # Check for RoiSet.zip if loose ROIs are empty
+        temp_extracted_rois = []
+        if not raw_roi_files:
+            zip_files = list(parent_dir.glob("*.zip"))
+            for zf_path in zip_files:
+                try:
+                    with zipfile.ZipFile(zf_path) as zf:
+                        for zname in zf.namelist():
+                            if zname.lower().endswith(".roi"):
+                                zdata = zf.read(zname)
+                                import tempfile
+                                tdir = Path(tempfile.gettempdir()) / "sic_kicet_rois"
+                                tdir.mkdir(exist_ok=True)
+                                troi = tdir / Path(zname).name
+                                troi.write_bytes(zdata)
+                                temp_extracted_rois.append(troi)
+                except Exception:
+                    pass
+            raw_roi_files.extend(temp_extracted_rois)
+
+        # Filter ROI files by filename context (e.g. avoid matching After ROIs to Before images)
+        t_stem = img_file.stem.lower()
+        roi_files = []
+        for r in raw_roi_files:
+            r_name = r.name.lower()
+            if "after" in t_stem and "before" in r_name:
+                continue
+            if "before" in t_stem and "after" in r_name:
+                continue
+            roi_files.append(r)
+
+        # Handle unannotated image staging
+        if not roi_files:
+            if not allow_unannotated:
+                print(f"[Skip] No matching ROI labels for {img_file.name}")
+                continue
+
+            # Link unannotated image for subsequent pseudo-labeling
+            if not already_linked:
+                if use_symlink:
+                    try:
+                        dest_file.symlink_to(img_file.resolve())
+                    except OSError:
+                        import shutil
+                        shutil.copy2(img_file, dest_file)
+                else:
+                    import shutil
+                    shutil.copy2(img_file, dest_file)
+
+            summary_item = {
+                "image": dest_file.name,
+                "unannotated": True,
+                "ready_for_pseudo_label": True,
+            }
+            imported_summary.append(summary_item)
+            print(f"[Staged for Pseudo-Labeling] {dest_file.name} (Source: {img_file.relative_to(src_path)})")
+            continue
+
+        # Inspect image shape for ROI parsing
+        try:
+            img, meta = inspect_and_load_xrt(img_file)
+            img_shape = img.shape[:2]
+        except Exception as e:
+            print(f"[Skip] Could not read {img_file}: {e}")
+            continue
+
+        all_defects: List[Dict[str, Any]] = []
+        for rfile in roi_files:
+            parsed = parse_kicet_roi_file(rfile, img_shape, start_id=len(all_defects) + 1)
+            all_defects.extend(parsed)
+
+        if not all_defects:
+            if allow_unannotated:
+                if not already_linked:
+                    if use_symlink:
+                        try:
+                            dest_file.symlink_to(img_file.resolve())
+                        except OSError:
+                            import shutil
+                            shutil.copy2(img_file, dest_file)
+                    else:
+                        import shutil
+                        shutil.copy2(img_file, dest_file)
+                summary_item = {
+                    "image": dest_file.name,
+                    "unannotated": True,
+                    "ready_for_pseudo_label": True,
+                }
+                imported_summary.append(summary_item)
+                print(f"[Staged for Pseudo-Labeling] {dest_file.name} (Zero valid ROIs)")
+            continue
+
         # Link or extract single 2D slice for 3D stacks
-        if not dest_tif.exists():
+        if not already_linked:
             if meta.get("is_3d", False):
-                # 3D stack: extract only the verified key slice (slice 0) to prevent empty slice pollution
-                print(f"[3D Stack] Extracting key slice 0 from {meta['num_slices']} slices -> {dest_tif.name}")
-                tifffile.imwrite(str(dest_tif), img)
+                print(f"[3D Stack] Extracting key slice 0 from {meta['num_slices']} slices -> {dest_file.name}")
+                tifffile.imwrite(str(dest_file), img)
             elif use_symlink:
                 try:
-                    dest_tif.symlink_to(tiff_file.resolve())
+                    dest_file.symlink_to(img_file.resolve())
                 except OSError:
                     import shutil
-                    shutil.copy2(tiff_file, dest_tif)
+                    shutil.copy2(img_file, dest_file)
             else:
                 import shutil
-                shutil.copy2(tiff_file, dest_tif)
+                shutil.copy2(img_file, dest_file)
 
         # Write ground truth JSON
         counts = {name: 0 for name in CLASS_NAMES.values()}
@@ -564,8 +646,8 @@ def import_kicet_dataset(
         with open(dest_json, "w", encoding="utf-8") as f:
             json.dump(
                 {
-                    "image_file": dest_tif.name,
-                    "original_path": str(tiff_file),
+                    "image_file": dest_file.name,
+                    "original_path": str(img_file),
                     "shape": list(img_shape),
                     "num_defects": len(all_defects),
                     "counts": counts,
@@ -576,7 +658,7 @@ def import_kicet_dataset(
             )
 
         summary_item = {
-            "image": dest_tif.name,
+            "image": dest_file.name,
             "shape": list(img_shape),
             "num_defects": len(all_defects),
             "counts": counts,
@@ -584,7 +666,7 @@ def import_kicet_dataset(
         }
         imported_summary.append(summary_item)
         print(
-            f"[Imported] {dest_tif.name}: {len(all_defects)} defects "
+            f"[Imported (Annotated)] {dest_file.name}: {len(all_defects)} defects "
             f"(BPD={counts['BPD']}, TED={counts['TED']}, TSD={counts['TSD']}, Particle={counts.get('Particle', 0)})"
         )
 

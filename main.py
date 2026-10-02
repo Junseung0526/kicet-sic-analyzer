@@ -344,6 +344,7 @@ def main():
     parser.add_argument("--note", type=str, default="", help="Experiment or release notes description")
     parser.add_argument("--tag", type=str, default="v1.1-jpg-exp", help="Git tag for release mode")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing pseudo-label JSONs")
+    parser.add_argument("--include-subtiles", action="store_true", help="Include 3k sub-tiles (1.jpg~16.jpg) in addition to full wafer images")
 
     args = parser.parse_args()
 
@@ -379,9 +380,16 @@ def main():
         if not kicet_src.exists():
             print(f"[Error] KICET directory not found: {kicet_src}")
             return
-        print(f"\n[Step: Importing KICET Real 2D XRT & ImageJ ROI annotations]")
-        imported = import_kicet_dataset(kicet_src, raw_dir, use_symlink=True)
-        print(f"Successfully imported {len(imported)} wafer datasets to {raw_dir}\n")
+        print(f"\n[Step: Importing KICET Real 2D XRT Images & Annotations across 1~9 Area]")
+        imported = import_kicet_dataset(
+            source_dir=kicet_src,
+            target_raw_dir=raw_dir,
+            use_symlink=True,
+            include_jpg=True,
+            include_subtiles=args.include_subtiles,
+            allow_unannotated=True,
+        )
+        print(f"Successfully imported/staged {len(imported)} wafer datasets to {raw_dir}\n")
         return
 
     # Mode 2: Preprocess and slice
