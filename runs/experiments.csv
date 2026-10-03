@@ -1,3 +1,4 @@
 Timestamp,Experiment_Name,Base_Weights,Epochs,Batch_Size,Image_Size,Device,Model_ONNX,Model_PT,mAP50,mAP50_95,Precision,Recall,Notes
 2026-10-02 11:08:00,baseline_kicet_v1,models/best_2d_base.onnx,50,16,640,mps,models/best_2d_base.onnx,models/best_2d_base.pt,0.892,0.651,0.884,0.867,Original KICET 2D XRT baseline model
 2026-10-02 23:48:22,exp_kicet_v1,yolov8n.pt,30,16,640,mps,models/exp_kicet_v1.onnx,models/exp_kicet_v1.pt,0.3648,0.2107,0.458,0.4178,
+2026-10-03 05:52:35,exp_tsd_master_v1,models/best_2d_base.pt,60,8,640,mps,models/exp_tsd_master_v1.onnx,models/exp_tsd_master_v1.pt,0.2792,0.1485,0.3435,0.3161,

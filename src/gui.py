@@ -2036,15 +2036,13 @@ class SiCDefectMainWindow(QMainWindow):
         self.retranslate_ui()
 
     def locate_default_model(self) -> Path:
-        """Locates baseline models/best_2d_base.onnx or fallback models across project paths."""
+        """Locates production models/sic_defect_v1.2.onnx or fallback models across project paths."""
         candidates = [
-            Path("models") / "best_2d_base.onnx",
-            Path("models") / "best_2d_base.pt",
+            Path("models") / "sic_defect_v1.2.onnx",
+            Path("models") / "sic_defect_v1.2.pt",
+            Path("models") / "sic_defect_v1.0.onnx",
+            Path("models") / "sic_defect_v1.0.pt",
             Path("best.onnx"),
-            Path("runs") / "detect" / "runs" / "train" / "sic_defect_train" / "weights" / "best.onnx",
-            Path("runs") / "detect" / "runs" / "train" / "sic_defect_train" / "weights" / "best.pt",
-            Path("runs") / "train" / "sic_defect_train" / "weights" / "best.onnx",
-            Path("runs") / "train" / "sic_defect_train" / "weights" / "best.pt",
             Path("best.pt"),
             Path("yolov8n.onnx"),
             Path("yolov8n.pt"),
@@ -2055,45 +2053,68 @@ class SiCDefectMainWindow(QMainWindow):
         return (Path("best.onnx")).resolve()
 
     def get_available_models(self) -> List[Path]:
-        """Scans models/ and workspace root for available ONNX and PyTorch checkpoints."""
+        """Scans models/ and workspace root for clean ONNX and PyTorch checkpoints."""
         found: List[Path] = []
         models_dir = Path("models")
         if models_dir.exists():
-            found.extend(models_dir.glob("*.onnx"))
-            found.extend(models_dir.glob("*.pt"))
-        for pattern in ("*.onnx", "*.pt"):
-            found.extend(Path.cwd().glob(pattern))
+            # Prioritize clean deployment ONNX models in models/ (exclude archive)
+            found.extend([p for p in models_dir.glob("*.onnx") if "archive" not in p.parts])
+            # If no ONNX, check .pt
+            if not found:
+                found.extend([p for p in models_dir.glob("*.pt") if "archive" not in p.parts])
+
+        # Also search workspace root if models/ is empty
+        if not found:
+            for pattern in ("*.onnx", "*.pt"):
+                found.extend(Path.cwd().glob(pattern))
+
+        if hasattr(self, "model_path") and self.model_path and self.model_path.exists():
+            found.append(self.model_path)
 
         unique: Dict[str, Path] = {}
         for p in found:
             unique[str(p.resolve())] = p
 
         def sort_key(p: Path):
-            if "best_2d_base" in p.name:
+            # v1.2 first, then v1.0, then best.onnx, then others
+            if "v1.2" in p.name:
                 return (0, p.name)
-            if "best.onnx" in p.name:
+            if "v1.0" in p.name:
                 return (1, p.name)
-            return (2, p.name)
+            if "best.onnx" in p.name:
+                return (2, p.name)
+            return (3, p.name)
 
         return sorted(list(unique.values()), key=sort_key)
 
     def refresh_available_models(self):
-        """Populates model dropdown combo box with all discovered checkpoints."""
+        """Populates model dropdown combo box with clean, human-readable labels."""
         if not hasattr(self, "combo_model"):
             return
         models = self.get_available_models()
-        self._model_registry = {m.name: m for m in models}
-
-        if self.model_path.name not in self._model_registry:
-            self._model_registry[self.model_path.name] = self.model_path
-
+        self._model_registry = {}
         self.combo_model.blockSignals(True)
         self.combo_model.clear()
-        for name in self._model_registry.keys():
-            self.combo_model.addItem(name)
 
-        if self.model_path.name in self._model_registry:
-            self.combo_model.setCurrentText(self.model_path.name)
+        for m in models:
+            if "v1.2" in m.name:
+                display_label = f"🌟 {m.name} (최신 정식 모델)"
+            elif "v1.0" in m.name:
+                display_label = f"📦 {m.name} (초기 기준 모델)"
+            else:
+                display_label = m.name
+            self._model_registry[display_label] = m
+            self.combo_model.addItem(display_label)
+
+        # Match current model_path
+        cur_target = None
+        for label, p in self._model_registry.items():
+            if p.resolve() == self.model_path.resolve() or p.name == self.model_path.name:
+                cur_target = label
+                break
+
+        if cur_target:
+            self.combo_model.setCurrentText(cur_target)
         elif self.combo_model.count() > 0:
             self.combo_model.setCurrentIndex(0)
             self.model_path = self._model_registry[self.combo_model.currentText()]
@@ -2104,9 +2125,9 @@ class SiCDefectMainWindow(QMainWindow):
 
     def on_model_combo_changed(self, idx: int):
         """Switches active weights when selected from dropdown."""
-        cur_name = self.combo_model.currentText()
-        if hasattr(self, "_model_registry") and cur_name in self._model_registry:
-            self.model_path = self._model_registry[cur_name]
+        cur_label = self.combo_model.currentText()
+        if hasattr(self, "_model_registry") and cur_label in self._model_registry:
+            self.model_path = self._model_registry[cur_label]
             if hasattr(self, "lbl_model_info"):
                 self.lbl_model_info.setText(self.tr("model_info", name=self.model_path.name))
 
@@ -3822,7 +3843,6 @@ class SiCDefectMainWindow(QMainWindow):
         if file_str:
             self.model_path = Path(file_str)
             self.refresh_available_models()
-            self.combo_model.setCurrentText(self.model_path.name)
             self.lbl_model_info.setText(self.tr("model_info", name=self.model_path.name))
 
     def load_image(self, file_path: Path):

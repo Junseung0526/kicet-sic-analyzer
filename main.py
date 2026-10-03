@@ -337,9 +337,13 @@ def main():
     parser.add_argument("--imgsz", type=int, default=640, help="Image size")
     parser.add_argument("--device", type=str, default=None, help="Device ('mps', 'cuda:0', 'cpu')")
     default_base_weights = (
-        "models/best_2d_base.pt"
-        if Path("models/best_2d_base.pt").exists()
-        else ("best.pt" if Path("best.pt").exists() else "yolov8n.pt")
+        "models/sic_defect_v1.2.pt"
+        if Path("models/sic_defect_v1.2.pt").exists()
+        else (
+            "models/sic_defect_v1.0.pt"
+            if Path("models/sic_defect_v1.0.pt").exists()
+            else ("best.pt" if Path("best.pt").exists() else "yolov8n.pt")
+        )
     )
     parser.add_argument("--weights", type=str, default=default_base_weights, help="Base model weights for fine-tuning (defaults to baseline checkpoint)")
     parser.add_argument("--conf", type=float, default=0.25, help="Inference confidence threshold")
@@ -347,7 +351,7 @@ def main():
     parser.add_argument("--model-path", type=str, default=None, help="Trained model path for inference / pseudo-labeling / release")
     parser.add_argument("--name", type=str, default="sic_defect_train", help="Experiment name (e.g. 'exp_jpg_v1')")
     parser.add_argument("--note", type=str, default="", help="Experiment or release notes description")
-    parser.add_argument("--tag", type=str, default="v1.1-jpg-exp", help="Git tag for release mode")
+    parser.add_argument("--tag", type=str, default="v1.2", help="Git tag for release mode")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing pseudo-label JSONs")
     parser.add_argument("--include-subtiles", action="store_true", help="Include 3k sub-tiles (1.jpg~16.jpg) in addition to full wafer images")
 

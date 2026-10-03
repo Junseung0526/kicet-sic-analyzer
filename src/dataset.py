@@ -281,7 +281,7 @@ def generate_pseudo_labels_and_dataset(
 
     Args:
         raw_dir: Directory containing raw wafer images (.jpg, .tif, etc.).
-        model_path: Base weights for pseudo-labeling (defaults to models/best_2d_base.onnx).
+        model_path: Base weights for pseudo-labeling (defaults to models/sic_defect_v1.2.onnx).
         output_dir: Destination YOLO dataset directory.
         patch_size: Patch resolution for YOLO training (default: 640).
         overlap: Sliding-window overlap fraction.
@@ -305,9 +305,11 @@ def generate_pseudo_labels_and_dataset(
     # Determine baseline model for inference
     candidate_models = [
         Path(model_path) if model_path else None,
-        Path("models/best_2d_base.onnx"),
+        Path("models/sic_defect_v1.2.onnx"),
+        Path("models/sic_defect_v1.2.pt"),
+        Path("models/sic_defect_v1.0.onnx"),
+        Path("models/sic_defect_v1.0.pt"),
         Path("best.onnx"),
-        Path("models/best_2d_base.pt"),
         Path("best.pt"),
         Path("yolov8n.pt"),
     ]

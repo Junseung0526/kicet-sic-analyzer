@@ -32,8 +32,14 @@ sic-defect-ai/
 │   ├── preprocess.py        # 16-bit 정규화, CLAHE, 패치 슬라이싱, 양방향 좌표 변환, Mock 데이터 생성기
 │   ├── dataset.py           # YOLO 데이터셋 파이프라인 및 YAML 자동 생성
 │   ├── train.py             # YOLOv8/v11 전이학습 (MPS/CUDA/CPU) 및 ONNX 자동 Export
-│   └── inference.py         # 풀 웨이퍼 슬라이딩 윈도우 추론, Seam NMS, 결함 카운팅, 산점도/히트맵 시각화
-├── runs/                    # 학습 가중치 (best.pt, best.onnx) 및 추론 결과 보고서/시각화 맵
+│   ├── inference.py         # 풀 웨이퍼 슬라이딩 윈도우 추론, Seam NMS, 결함 카운팅, 산점도/히트맵 시각화
+│   └── gui.py               # PyQt6 기반 1.5억 화소 고속 뷰어, 실시간 결함 분석 및 리포트 도구
+├── models/                  # 정식 배포용 결함 검출 모델 저장소
+│   ├── sic_defect_v1.2.onnx # 최신 정식 모델 (1,487개 정제 TSD 검증 데이터 학습 챔피언 가중치)
+│   ├── sic_defect_v1.2.pt
+│   ├── sic_defect_v1.0.onnx # 초기 기준 모델 (Baseline 비교용)
+│   └── sic_defect_v1.0.pt
+├── runs/                    # 실험 기록 및 추론 결과 보고서/시각화 맵
 ├── main.py                  # 통합 실행 CLI 드라이버 스크립트
 ├── requirements.txt         # 의존성 패키지 목록
 └── README.md                # 프로젝트 문서

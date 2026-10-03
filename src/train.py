@@ -283,7 +283,7 @@ def train_yolo(
                 print(f"[Warning] Could not copy to {isolated_onnx}: {e}")
 
             # 2. Experimental model is preserved as models/{name}.onnx
-            # (Root best.onnx and models/best_2d_base.onnx are safely protected as baseline)
+            # (Official models models/sic_defect_v1.2.onnx and sic_defect_v1.0.onnx are safely protected as baselines)
             print(f"[Model Registry] Baseline model protected. Select '{isolated_onnx.name}' in GUI dropdown to compare.")
 
         except Exception as e:

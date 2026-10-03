@@ -883,8 +883,10 @@ def get_inference_engine(
     """
     # Candidate search paths if model_path is None or not existing
     default_candidates = [
-        Path("models/best_2d_base.onnx"),
-        Path("models/best_2d_base.pt"),
+        Path("models/sic_defect_v1.2.onnx"),
+        Path("models/sic_defect_v1.2.pt"),
+        Path("models/sic_defect_v1.0.onnx"),
+        Path("models/sic_defect_v1.0.pt"),
         Path("best.onnx"),
         Path("runs/detect/runs/train/sic_defect_train/weights/best.onnx"),
         Path("runs/detect/runs/train/sic_defect_train/weights/best.pt"),
@@ -1529,7 +1531,7 @@ def export_defect_reports(
             "Reclassify_Reason",
             "Model_Name",
         ])
-        model_name = results.get("model_name", "best_2d_base.onnx")
+        model_name = results.get("model_name", "sic_defect_v1.2.onnx")
         for d in defects:
             ang = d.get("angle_deg", "N/A")
             ang_lbl = d.get("angle_label", "N/A")

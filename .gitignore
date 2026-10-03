@@ -36,6 +36,7 @@ runs/*
 
 # Curated Deployment Models in models/
 !models/
+models/archive/
 !models/*.onnx
 !models/*.pt
 !models/*.json
