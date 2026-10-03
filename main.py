@@ -209,7 +209,7 @@ def run_release(
     if note:
         print(f"Release Notes:      {note}")
 
-    # Check model file if specified
+    # Promote model file to models/sic_defect_{tag}.* if specified
     if model_path:
         mp = Path(model_path)
         if not mp.is_absolute():
@@ -217,8 +217,52 @@ def run_release(
         if not mp.exists():
             print(f"[Error] Specified model not found: {mp}")
             return
-        size_mb = mp.stat().st_size / (1024 * 1024)
-        print(f"Model File:         {mp.name} ({size_mb:.2f} MB)")
+
+        import shutil
+        models_dir = root / "models"
+        models_dir.mkdir(exist_ok=True)
+        dest_tag = tag if tag.startswith("v") else f"v{tag}"
+        target_pt = models_dir / f"sic_defect_{dest_tag}.pt"
+        target_onnx = models_dir / f"sic_defect_{dest_tag}.onnx"
+
+        if mp.suffix == ".pt":
+            if mp.resolve() != target_pt.resolve():
+                shutil.copy2(mp, target_pt)
+                print(f"[Model Registry] Saved release checkpoint: {target_pt}")
+            # Check corresponding ONNX or export
+            src_onnx = mp.with_suffix(".onnx")
+            if src_onnx.exists():
+                shutil.copy2(src_onnx, target_onnx)
+                print(f"[Model Registry] Saved release ONNX: {target_onnx}")
+            else:
+                try:
+                    from ultralytics import YOLO
+                    y_model = YOLO(str(target_pt))
+                    exported = y_model.export(format="onnx", imgsz=640)
+                    shutil.move(exported, str(target_onnx))
+                    print(f"[Model Registry] Automatically exported ONNX: {target_onnx}")
+                except Exception as e:
+                    print(f"[Warning] Could not auto-export ONNX: {e}")
+        elif mp.suffix == ".onnx":
+            if mp.resolve() != target_onnx.resolve():
+                shutil.copy2(mp, target_onnx)
+                print(f"[Model Registry] Saved release ONNX: {target_onnx}")
+            src_pt = mp.with_suffix(".pt")
+            if src_pt.exists():
+                shutil.copy2(src_pt, target_pt)
+                print(f"[Model Registry] Saved release checkpoint: {target_pt}")
+
+        # Update root convenience pointers
+        try:
+            if target_onnx.exists():
+                shutil.copy2(target_onnx, root / "best.onnx")
+            if target_pt.exists():
+                shutil.copy2(target_pt, root / "best.pt")
+        except Exception:
+            pass
+
+        size_mb = (target_onnx if target_onnx.exists() else mp).stat().st_size / (1024 * 1024)
+        print(f"Model File:         sic_defect_{dest_tag}.onnx ({size_mb:.2f} MB)")
         if size_mb > 100:
             print(f"[Warning] Model size ({size_mb:.2f} MB) exceeds GitHub 100MB limit. Consider git-lfs.")
         elif size_mb > 50:

@@ -14,6 +14,7 @@ import csv
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -2035,25 +2036,26 @@ class SiCDefectMainWindow(QMainWindow):
         self.current_lang = "EN" if self.current_lang == "KO" else "KO"
         self.retranslate_ui()
 
+    @staticmethod
+    def _parse_model_version(path: Path) -> Tuple[int, int, int]:
+        """Extracts (major, minor, patch) semantic version from model name."""
+        m = re.search(r"v(\d+)\.(\d+)(?:\.(\d+))?", path.name)
+        if m:
+            major = int(m.group(1))
+            minor = int(m.group(2))
+            patch = int(m.group(3)) if m.group(3) else 0
+            return (major, minor, patch)
+        return (-1, -1, -1)
+
     def locate_default_model(self) -> Path:
-        """Locates production models/sic_defect_v1.2.onnx or fallback models across project paths."""
-        candidates = [
-            Path("models") / "sic_defect_v1.2.onnx",
-            Path("models") / "sic_defect_v1.2.pt",
-            Path("models") / "sic_defect_v1.0.onnx",
-            Path("models") / "sic_defect_v1.0.pt",
-            Path("best.onnx"),
-            Path("best.pt"),
-            Path("yolov8n.onnx"),
-            Path("yolov8n.pt"),
-        ]
-        for c in candidates:
-            if c.exists():
-                return c.resolve()
-        return (Path("best.onnx")).resolve()
+        """Locates production model: highest versioned model in models/ or fallback."""
+        models = self.get_available_models()
+        if models:
+            return models[0].resolve()
+        return Path("best.onnx").resolve()
 
     def get_available_models(self) -> List[Path]:
-        """Scans models/ and workspace root for clean ONNX and PyTorch checkpoints."""
+        """Scans models/ and workspace root for clean ONNX and PyTorch checkpoints, sorted by version."""
         found: List[Path] = []
         models_dir = Path("models")
         if models_dir.exists():
@@ -2076,14 +2078,13 @@ class SiCDefectMainWindow(QMainWindow):
             unique[str(p.resolve())] = p
 
         def sort_key(p: Path):
-            # v1.2 first, then v1.0, then best.onnx, then others
-            if "v1.2" in p.name:
-                return (0, p.name)
-            if "v1.0" in p.name:
-                return (1, p.name)
+            ver = self._parse_model_version(p)
+            if ver != (-1, -1, -1):
+                # Highest version first
+                return (0, -ver[0], -ver[1], -ver[2], p.name)
             if "best.onnx" in p.name:
-                return (2, p.name)
-            return (3, p.name)
+                return (1, 0, 0, 0, p.name)
+            return (2, 0, 0, 0, p.name)
 
         return sorted(list(unique.values()), key=sort_key)
 
@@ -2096,11 +2097,18 @@ class SiCDefectMainWindow(QMainWindow):
         self.combo_model.blockSignals(True)
         self.combo_model.clear()
 
+        # Find highest and lowest version among versioned models
+        versioned = [m for m in models if self._parse_model_version(m) != (-1, -1, -1)]
+        max_v = versioned[0] if versioned else None
+        min_v = versioned[-1] if len(versioned) > 1 else None
+
         for m in models:
-            if "v1.2" in m.name:
+            if m == max_v:
                 display_label = f"🌟 {m.name} (최신 정식 모델)"
-            elif "v1.0" in m.name:
+            elif m == min_v:
                 display_label = f"📦 {m.name} (초기 기준 모델)"
+            elif "sic_defect" in m.name:
+                display_label = f"🔹 {m.name}"
             else:
                 display_label = m.name
             self._model_registry[display_label] = m
